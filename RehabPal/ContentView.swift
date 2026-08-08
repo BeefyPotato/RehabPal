@@ -1,25 +1,62 @@
-//
-//  ContentView.swift
-//  RehabPal
-//
-//  Created by Event on 8/8/26.
-//
-
 import SwiftUI
-import RealityKit
 
 struct ContentView: View {
-    var body: some View {
-        VStack {
-            Model3D(named: "Scene", bundle: .main)
-                .padding(.bottom, 50)
+    @State private var state = AppState()
+    @State private var selectedExercise: ExerciseKind?
+    @State private var showingSettings = false
+    @State private var useDemoFallback = true
 
-            Text("Hello, world!")
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                switch DemoRouter.screen(for: state) {
+                case .home:
+                    HomeView(state: state)
+                case .medication:
+                    MedicationGateView(state: state)
+                case .routine:
+                    if let selectedExercise {
+                        ExerciseDemoView(
+                            exercise: selectedExercise,
+                            prescription: state.prescription,
+                            useDemoFallback: useDemoFallback
+                        ) { result in
+                            _ = state.completeExercise(selectedExercise, result: result)
+                            self.selectedExercise = nil
+                        } onCancel: {
+                            self.selectedExercise = nil
+                        }
+                    } else {
+                        DailyRoutineView(state: state) { selectedExercise = $0 }
+                    }
+                case .assessment:
+                    AssessmentView(state: state, useDemoFallback: useDemoFallback)
+                case .symptoms:
+                    SymptomCheckView(state: state)
+                case .report:
+                    AfterCareReportView(state: state)
+                case .petReward:
+                    PetRewardView(state: state)
+                case .complete:
+                    FullForTodayView(state: state)
+                }
+            }
+            .animation(.easeInOut, value: state.stage)
+
+            Button {
+                showingSettings = true
+            } label: {
+                Label("Demo settings", systemImage: "gearshape")
+            }
+            .buttonStyle(.borderless)
+            .padding(24)
         }
-        .padding()
+        .sheet(isPresented: $showingSettings) {
+            DemoSettingsView(useDemoFallback: $useDemoFallback)
+        }
     }
 }
 
-#Preview(windowStyle: .automatic) {
+#Preview {
     ContentView()
 }
