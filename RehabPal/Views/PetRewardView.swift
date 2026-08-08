@@ -8,7 +8,11 @@ struct PetRewardView: View {
     var body: some View {
         VStack(spacing: 24) {
             RealityView { content in
-                content.add(RehabPalAssets.makePrimitivePet())
+                let pet = await RehabPalAssets.loadPet()
+                let treat = await RehabPalAssets.loadTreat()
+                treat.position = [0.13, 0.025, 0.04]
+                content.add(pet)
+                content.add(treat)
             }
             .frame(width: 320, height: 300)
             Text("Your Recovery Pet earned a treat")
