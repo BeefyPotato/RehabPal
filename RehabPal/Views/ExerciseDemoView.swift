@@ -4,6 +4,7 @@ struct ExerciseDemoView: View {
     let exercise: ExerciseKind
     let prescription: Prescription
     let useDemoFallback: Bool
+    let liveObservation: MovementObservation
     let onComplete: (GameplayResult) -> Void
     let onCancel: () -> Void
 
@@ -16,12 +17,14 @@ struct ExerciseDemoView: View {
         exercise: ExerciseKind,
         prescription: Prescription,
         useDemoFallback: Bool,
+        liveObservation: MovementObservation,
         onComplete: @escaping (GameplayResult) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.exercise = exercise
         self.prescription = prescription
         self.useDemoFallback = useDemoFallback
+        self.liveObservation = liveObservation
         self.onComplete = onComplete
         self.onCancel = onCancel
         _balance = State(initialValue: BalanceSession(
@@ -50,37 +53,49 @@ struct ExerciseDemoView: View {
                     .controlSize(.extraLarge)
                 Button("Back", action: onCancel).buttonStyle(.borderless)
             } else if exercise == .balance {
-                BalancePlatformView(direction: balance.currentDirection, progress: balance.progress, trackingVisible: true)
+                BalancePlatformView(
+                    direction: balance.currentDirection,
+                    progress: balance.progress,
+                    trackingVisible: useDemoFallback || liveObservation.isTracked
+                )
                 fallbackDisclosure
-                Button("Hold centre (demo tracking)") {
-                    let done = balance.registerCentreHold(seconds: prescription.balanceHoldSeconds, isTracked: true)
-                    if done { onComplete(.fixture(for: .balance)) }
+                if useDemoFallback {
+                    Button("Hold centre (demo tracking)") {
+                        let done = balance.registerCentreHold(seconds: prescription.balanceHoldSeconds, isTracked: true)
+                        if done { onComplete(.fixture(for: .balance)) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
             } else {
                 SqueezeBuddyView(
                     closure: closure,
                     phase: squeeze.phase,
                     completedRepetitions: squeeze.completedRepetitions,
                     prescribedRepetitions: squeeze.prescribedRepetitions,
-                    trackingVisible: true
+                    trackingVisible: useDemoFallback || liveObservation.isTracked
                 )
                 fallbackDisclosure
-                Button("Complete close–hold–open (demo tracking)") {
-                    let start = Double(squeeze.completedRepetitions) * 2
-                    closure = 0.85
-                    _ = squeeze.update(closure: closure, at: start, isTracked: true)
-                    _ = squeeze.update(closure: closure, at: start + prescription.squeezeHoldSeconds + 0.1, isTracked: true)
-                    closure = 0.15
-                    let done = squeeze.update(closure: closure, at: start + prescription.squeezeHoldSeconds + 0.2, isTracked: true)
-                    if done { onComplete(.fixture(for: .squeeze)) }
+                if useDemoFallback {
+                    Button("Complete close–hold–open (demo tracking)") {
+                        let start = Double(squeeze.completedRepetitions) * 2
+                        closure = 0.85
+                        _ = squeeze.update(closure: closure, at: start, isTracked: true)
+                        _ = squeeze.update(closure: closure, at: start + prescription.squeezeHoldSeconds + 0.1, isTracked: true)
+                        closure = 0.15
+                        let done = squeeze.update(closure: closure, at: start + prescription.squeezeHoldSeconds + 0.2, isTracked: true)
+                        if done { onComplete(.fixture(for: .squeeze)) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
             }
         }
         .padding(40)
+        .onChange(of: liveObservation) { _, observation in
+            guard started, !useDemoFallback else { return }
+            consumeLiveObservation(observation)
+        }
     }
 
     private var introduction: String {
@@ -93,5 +108,28 @@ struct ExerciseDemoView: View {
         Text(useDemoFallback ? "DEMO FALLBACK — synthetic observations use the same detectors" : "LIVE HAND TRACKING")
             .font(.caption.bold())
             .foregroundStyle(useDemoFallback ? .orange : .green)
+    }
+
+    private func consumeLiveObservation(_ observation: MovementObservation) {
+        if exercise == .balance {
+            guard observation.isTracked,
+                  let direction = balance.currentDirection,
+                  WristTargetDetector(targetMagnitude: 0.4, tolerance: 0.12)
+                    .classify(pitch: observation.wristPitch, roll: observation.wristRoll) == direction
+            else { return }
+            let done = balance.registerCentreHold(
+                seconds: prescription.balanceHoldSeconds,
+                isTracked: observation.isTracked
+            )
+            if done { onComplete(.fixture(for: .balance)) }
+        } else {
+            closure = observation.closure
+            let done = squeeze.update(
+                closure: observation.closure,
+                at: observation.timestamp,
+                isTracked: observation.isTracked
+            )
+            if done { onComplete(.fixture(for: .squeeze)) }
+        }
     }
 }

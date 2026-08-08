@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @State private var state = AppState()
     @State private var selectedExercise: ExerciseKind?
+    @State private var handTracking = HandTrackingEngine()
     @State private var showingSettings = false
     @State private var useDemoFallback = true
 
@@ -19,7 +20,8 @@ struct ContentView: View {
                         ExerciseDemoView(
                             exercise: selectedExercise,
                             prescription: state.prescription,
-                            useDemoFallback: useDemoFallback
+                            useDemoFallback: useDemoFallback,
+                            liveObservation: handTracking.latestObservation
                         ) { result in
                             _ = state.completeExercise(selectedExercise, result: result)
                             self.selectedExercise = nil
@@ -53,6 +55,11 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingSettings) {
             DemoSettingsView(useDemoFallback: $useDemoFallback)
+        }
+        .task(id: useDemoFallback) {
+            if !useDemoFallback {
+                await handTracking.start()
+            }
         }
     }
 }
