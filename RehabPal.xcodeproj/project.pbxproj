@@ -1,0 +1,162 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000030 /* RealityKitContent in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000050 /* RealityKitContent */; };
+		A10000000000000000000031 /* RealityKitContent in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000051 /* RealityKitContent */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A10000000000000000000040 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000010;
+			remoteInfo = RehabPal;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A10000000000000000000020 /* RehabPal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RehabPal.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000021 /* RehabPalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RehabPalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		A10000000000000000000022 /* RehabPal */ = {isa = PBXFileSystemSynchronizedRootGroup; path = RehabPal; sourceTree = "<group>"; };
+		A10000000000000000000023 /* RehabPalTests */ = {isa = PBXFileSystemSynchronizedRootGroup; path = RehabPalTests; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000000060 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000030 /* RealityKitContent in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000061 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000031 /* RealityKitContent in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000022 /* RehabPal */,
+				A10000000000000000000023 /* RehabPalTests */,
+				A10000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000020 /* RehabPal.app */,
+				A10000000000000000000021 /* RehabPalTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000000000000000000010 /* RehabPal */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000070 /* Build configuration list for PBXNativeTarget "RehabPal" */;
+			buildPhases = (
+				A10000000000000000000062 /* Sources */,
+				A10000000000000000000060 /* Frameworks */,
+				A10000000000000000000064 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (A10000000000000000000022 /* RehabPal */,);
+			name = RehabPal;
+			packageProductDependencies = (A10000000000000000000050 /* RealityKitContent */,);
+			productName = RehabPal;
+			productReference = A10000000000000000000020 /* RehabPal.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A10000000000000000000011 /* RehabPalTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000071 /* Build configuration list for PBXNativeTarget "RehabPalTests" */;
+			buildPhases = (
+				A10000000000000000000063 /* Sources */,
+				A10000000000000000000061 /* Frameworks */,
+				A10000000000000000000065 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (A10000000000000000000023 /* RehabPalTests */,);
+			name = RehabPalTests;
+			packageProductDependencies = (A10000000000000000000051 /* RealityKitContent */,);
+			productName = RehabPalTests;
+			productReference = A10000000000000000000021 /* RehabPalTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					A10000000000000000000010 = {CreatedOnToolsVersion = 27.0; };
+					A10000000000000000000011 = {CreatedOnToolsVersion = 27.0; TestTargetID = A10000000000000000000010; };
+				};
+			};
+			buildConfigurationList = A10000000000000000000072 /* Build configuration list for PBXProject "RehabPal" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base,);
+			mainGroup = A10000000000000000000002;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (A10000000000000000000049 /* XCLocalSwiftPackageReference "RealityKitContent" */,);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A10000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (A10000000000000000000010 /* RehabPal */, A10000000000000000000011 /* RehabPalTests */,);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000064 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000065 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000000000000000000062 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000063 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A10000000000000000000041 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A10000000000000000000010 /* RehabPal */; targetProxy = A10000000000000000000040; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A10000000000000000000080 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_OPTIMIZATION_LEVEL = 0; ONLY_ACTIVE_ARCH = YES; SDKROOT = xros; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
+		A10000000000000000000081 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; ENABLE_NS_ASSERTIONS = NO; GCC_C_LANGUAGE_STANDARD = gnu17; SDKROOT = xros; SWIFT_COMPILATION_MODE = wholemodule; }; name = Release; };
+		A10000000000000000000082 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_UIApplicationPreferredDefaultSceneSessionRole = UIWindowSceneSessionRoleVolumetricApplication; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.rehabpal.app; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = xros; SUPPORTED_PLATFORMS = "xros xrsimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = 7; XROS_DEPLOYMENT_TARGET = 2.0; }; name = Debug; };
+		A10000000000000000000083 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_UIApplicationPreferredDefaultSceneSessionRole = UIWindowSceneSessionRoleVolumetricApplication; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.rehabpal.app; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = xros; SUPPORTED_PLATFORMS = "xros xrsimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = 7; XROS_DEPLOYMENT_TARGET = 2.0; }; name = Release; };
+		A10000000000000000000084 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.rehabpal.app.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = xros; SUPPORTED_PLATFORMS = "xros xrsimulator"; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = 7; XROS_DEPLOYMENT_TARGET = 2.0; }; name = Debug; };
+		A10000000000000000000085 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.rehabpal.app.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = xros; SUPPORTED_PLATFORMS = "xros xrsimulator"; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = 7; XROS_DEPLOYMENT_TARGET = 2.0; }; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A10000000000000000000070 /* Build configuration list for PBXNativeTarget "RehabPal" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000082 /* Debug */, A10000000000000000000083 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A10000000000000000000071 /* Build configuration list for PBXNativeTarget "RehabPalTests" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000084 /* Debug */, A10000000000000000000085 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A10000000000000000000072 /* Build configuration list for PBXProject "RehabPal" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000080 /* Debug */, A10000000000000000000081 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A10000000000000000000049 /* XCLocalSwiftPackageReference "RealityKitContent" */ = {isa = XCLocalSwiftPackageReference; relativePath = RealityKitContent; };
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A10000000000000000000050 /* RealityKitContent */ = {isa = XCSwiftPackageProductDependency; package = A10000000000000000000049 /* XCLocalSwiftPackageReference "RealityKitContent" */; productName = RealityKitContent; };
+		A10000000000000000000051 /* RealityKitContent */ = {isa = XCSwiftPackageProductDependency; package = A10000000000000000000049 /* XCLocalSwiftPackageReference "RealityKitContent" */; productName = RealityKitContent; };
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A10000000000000000000001 /* Project object */;
+}
