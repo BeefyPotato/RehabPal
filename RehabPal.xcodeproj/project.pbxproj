@@ -7,29 +7,29 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		017E6530302721550061DC6A /* temporary_pal_new.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = temporary_pal_new.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		017E6530302721550061DC6A /* RehabPal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RehabPal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		017E653F302721560061DC6A /* Exceptions for "temporary_pal_new" folder in "temporary_pal_new" target */ = {
+		017E653F302721560061DC6A /* Exceptions for "RehabPal" folder in "RehabPal" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 017E652F302721550061DC6A /* temporary_pal_new */;
+			target = 017E652F302721550061DC6A /* RehabPal */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		017E6532302721550061DC6A /* temporary_pal_new */ = {
+		017E6532302721550061DC6A /* RehabPal */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				017E653F302721560061DC6A /* Exceptions for "temporary_pal_new" folder in "temporary_pal_new" target */,
+				017E653F302721560061DC6A /* Exceptions for "RehabPal" folder in "RehabPal" target */,
 			);
 			explicitFolders = (
 				Resources/Materials,
 			);
-			path = temporary_pal_new;
+			path = RehabPal;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -46,7 +46,7 @@
 		017E6527302721550061DC6A = {
 			isa = PBXGroup;
 			children = (
-				017E6532302721550061DC6A /* temporary_pal_new */,
+				017E6532302721550061DC6A /* RehabPal */,
 				017E6531302721550061DC6A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -54,7 +54,7 @@
 		017E6531302721550061DC6A /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				017E6530302721550061DC6A /* temporary_pal_new.app */,
+				017E6530302721550061DC6A /* RehabPal.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -62,9 +62,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		017E652F302721550061DC6A /* temporary_pal_new */ = {
+		017E652F302721550061DC6A /* RehabPal */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 017E6540302721560061DC6A /* Build configuration list for PBXNativeTarget "temporary_pal_new" */;
+			buildConfigurationList = 017E6540302721560061DC6A /* Build configuration list for PBXNativeTarget "RehabPal" */;
 			buildPhases = (
 				017E652C302721550061DC6A /* Sources */,
 				017E652D302721550061DC6A /* Frameworks */,
@@ -73,11 +73,11 @@
 			buildRules = (
 			);
 			fileSystemSynchronizedGroups = (
-				017E6532302721550061DC6A /* temporary_pal_new */,
+				017E6532302721550061DC6A /* RehabPal */,
 			);
-			name = temporary_pal_new;
-			productName = temporary_pal_new;
-			productReference = 017E6530302721550061DC6A /* temporary_pal_new.app */;
+			name = RehabPal;
+			productName = RehabPal;
+			productReference = 017E6530302721550061DC6A /* RehabPal.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -95,7 +95,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 017E652B302721550061DC6A /* Build configuration list for PBXProject "temporary_pal_new" */;
+			buildConfigurationList = 017E652B302721550061DC6A /* Build configuration list for PBXProject "RehabPal" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -109,7 +109,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				017E652F302721550061DC6A /* temporary_pal_new */,
+				017E652F302721550061DC6A /* RehabPal */,
 			);
 		};
 /* End PBXProject section */
@@ -131,7 +131,7 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		017E6541302721560061DC6A /* Debug configuration for PBXNativeTarget "temporary_pal_new" */ = {
+		017E6541302721560061DC6A /* Debug configuration for PBXNativeTarget "RehabPal" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -147,7 +147,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "big5.temporary-pal-new";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.beefypotato.RehabPal";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "xros xrsimulator";
@@ -160,7 +160,7 @@
 			};
 			name = Debug;
 		};
-		017E6542302721560061DC6A /* Release configuration for PBXNativeTarget "temporary_pal_new" */ = {
+		017E6542302721560061DC6A /* Release configuration for PBXNativeTarget "RehabPal" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -176,7 +176,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "big5.temporary-pal-new";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.beefypotato.RehabPal";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "xros xrsimulator";
@@ -189,7 +189,7 @@
 			};
 			name = Release;
 		};
-		017E6543302721560061DC6A /* Debug configuration for PBXProject "temporary_pal_new" */ = {
+		017E6543302721560061DC6A /* Debug configuration for PBXProject "RehabPal" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -253,7 +253,7 @@
 			};
 			name = Debug;
 		};
-		017E6544302721560061DC6A /* Release configuration for PBXProject "temporary_pal_new" */ = {
+		017E6544302721560061DC6A /* Release configuration for PBXProject "RehabPal" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -313,19 +313,19 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		017E652B302721550061DC6A /* Build configuration list for PBXProject "temporary_pal_new" */ = {
+		017E652B302721550061DC6A /* Build configuration list for PBXProject "RehabPal" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				017E6543302721560061DC6A /* Debug configuration for PBXProject "temporary_pal_new" */,
-				017E6544302721560061DC6A /* Release configuration for PBXProject "temporary_pal_new" */,
+				017E6543302721560061DC6A /* Debug configuration for PBXProject "RehabPal" */,
+				017E6544302721560061DC6A /* Release configuration for PBXProject "RehabPal" */,
 			);
 			defaultConfigurationName = Release;
 		};
-		017E6540302721560061DC6A /* Build configuration list for PBXNativeTarget "temporary_pal_new" */ = {
+		017E6540302721560061DC6A /* Build configuration list for PBXNativeTarget "RehabPal" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				017E6541302721560061DC6A /* Debug configuration for PBXNativeTarget "temporary_pal_new" */,
-				017E6542302721560061DC6A /* Release configuration for PBXNativeTarget "temporary_pal_new" */,
+				017E6541302721560061DC6A /* Debug configuration for PBXNativeTarget "RehabPal" */,
+				017E6542302721560061DC6A /* Release configuration for PBXNativeTarget "RehabPal" */,
 			);
 			defaultConfigurationName = Release;
 		};

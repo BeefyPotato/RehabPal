@@ -1,6 +1,6 @@
 //
 //  ContentView.swift
-//  temporary_pal_new
+//  RehabPal
 //
 //  Created by Event on 8/8/26.
 //
