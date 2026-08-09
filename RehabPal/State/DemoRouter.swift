@@ -2,7 +2,8 @@ enum DemoScreen: Equatable {
     case home
     case medication
     case routine
-    case assessment
+    case wristAssessment
+    case handAssessment
     case symptoms
     case report
     case petReward
@@ -16,7 +17,8 @@ enum DemoRouter {
         case .home: .home
         case .medicationGate: .medication
         case .routine: .routine
-        case .assessment: .assessment
+        case .wristAssessment: .wristAssessment
+        case .handAssessment: .handAssessment
         case .symptomCheck: .symptoms
         case .report: .report
         case .petReward: .petReward

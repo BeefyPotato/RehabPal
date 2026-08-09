@@ -12,6 +12,6 @@ final class DemoRouterTests: XCTestCase {
         XCTAssertEqual(DemoRouter.screen(for: state), .routine)
         XCTAssertTrue(state.completeExercise(.balance, result: .fixture(for: .balance)))
         XCTAssertTrue(state.completeExercise(.squeeze, result: .fixture(for: .squeeze)))
-        XCTAssertEqual(DemoRouter.screen(for: state), .assessment)
+        XCTAssertEqual(DemoRouter.screen(for: state), .wristAssessment)
     }
 }

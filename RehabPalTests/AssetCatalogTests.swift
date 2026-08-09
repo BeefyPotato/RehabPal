@@ -23,4 +23,18 @@ final class AssetCatalogTests: XCTestCase {
         XCTAssertFalse(pet.children.isEmpty)
         XCTAssertFalse(treat.children.isEmpty)
     }
+
+    @MainActor
+    func testPetIsNormalizedToTabletopScaleWithFeetOnGround() async {
+        let pet = await RehabPalAssets.loadPet()
+        let bounds = pet.visualBounds(relativeTo: nil)
+        XCTAssertLessThanOrEqual(max(bounds.extents.x, bounds.extents.y, bounds.extents.z), 0.221)
+        XCTAssertEqual(bounds.min.y, 0, accuracy: 0.002)
+    }
+
+    func testOriginalInstructionClipsAreBundled() {
+        for name in ["balance", "squeeze", "wristAssessment", "fingerROM"] {
+            XCTAssertNotNil(Bundle.main.url(forResource: name, withExtension: "mp4"), "Missing \(name).mp4")
+        }
+    }
 }

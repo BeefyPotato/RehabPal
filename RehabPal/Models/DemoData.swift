@@ -1,12 +1,20 @@
 import Foundation
 
 struct DemoHistory: Equatable, Sendable {
+    struct ROMSession: Equatable, Sendable, Identifiable {
+        let id: UUID
+        let date: Date
+        let wristScore: Int
+        let digitExcursions: [HandDigit: Double]
+    }
+
     let currentStreak: Int
     let completedSessions: Int
     let baselineWristControl: Int
     let previousWristControl: Int
     let baselineClosureConsistency: Int
     let previousClosureConsistency: Int
+    let romSessions: [ROMSession]
 
     nonisolated static let fixture = DemoHistory(
         currentStreak: 4,
@@ -14,7 +22,15 @@ struct DemoHistory: Equatable, Sendable {
         baselineWristControl: 61,
         previousWristControl: 69,
         baselineClosureConsistency: 64,
-        previousClosureConsistency: 72
+        previousClosureConsistency: 72,
+        romSessions: (0..<5).map { offset in
+            ROMSession(
+                id: UUID(uuidString: "00000000-0000-0000-0000-00000000000\(offset)")!,
+                date: Calendar.current.date(byAdding: .day, value: -(10 - offset * 2), to: .now)!,
+                wristScore: 61 + offset * 3,
+                digitExcursions: Dictionary(uniqueKeysWithValues: HandDigit.allCases.map { ($0, Double(72 + offset * 4 + $0.fixtureOffset)) })
+            )
+        }
     )
 }
 
@@ -27,23 +43,81 @@ struct GameplayResult: Equatable, Sendable {
     nonisolated static func fixture(for exercise: ExerciseKind) -> GameplayResult {
         GameplayResult(
             exercise: exercise,
-            prescribedDose: exercise == .balance ? 4 : 5,
-            completedDose: exercise == .balance ? 4 : 5,
+            prescribedDose: exercise == .balance ? 8 : 5,
+            completedDose: exercise == .balance ? 8 : 5,
             trackingNote: "Tracking remained usable"
         )
     }
 }
 
 struct AssessmentResult: Equatable, Sendable {
-    let wristControlScore: Int
-    let closureConsistencyScore: Int
-    let trackingConfidence: Float
+    struct WristResult: Equatable, Sendable {
+        let controlScore: Int
+        let trackingConfidence: Float
+    }
+
+    let wrist: WristResult
+    let handROM: [HandDigit: DigitROMSummary]
+
+    var wristControlScore: Int { wrist.controlScore }
+    var closureConsistencyScore: Int {
+        let available = handROM.values.filter(\.isAvailable)
+        guard !available.isEmpty else { return 0 }
+        return Int(available.map(\.consistency).reduce(0, +) / Double(available.count))
+    }
+    var trackingConfidence: Float {
+        let fingerConfidence = handROM.values.map(\.trackingConfidence)
+        guard !fingerConfidence.isEmpty else { return wrist.trackingConfidence }
+        return (wrist.trackingConfidence + Float(fingerConfidence.reduce(0, +) / Double(fingerConfidence.count))) / 2
+    }
+
+    init(wristControlScore: Int, closureConsistencyScore: Int, trackingConfidence: Float) {
+        wrist = WristResult(controlScore: wristControlScore, trackingConfidence: trackingConfidence)
+        handROM = Dictionary(uniqueKeysWithValues: HandDigit.allCases.map { digit in
+            (digit, DigitROMSummary(digit: digit, totalExcursion: Double(closureConsistencyScore), maximumFlexion: Double(closureConsistencyScore), maximumExtension: 0, consistency: Double(closureConsistencyScore), trackingConfidence: Double(trackingConfidence), attemptCount: 2))
+        })
+    }
+
+    init(wrist: WristResult, handROM: [HandDigit: DigitROMSummary]) {
+        self.wrist = wrist
+        self.handROM = handROM
+    }
 
     nonisolated static let fixture = AssessmentResult(
         wristControlScore: 73,
         closureConsistencyScore: 76,
         trackingConfidence: 0.92
     )
+}
+
+enum HandDigit: String, CaseIterable, Codable, Hashable, Sendable {
+    case thumb, index, middle, ring, little
+
+    var title: String { rawValue.capitalized }
+    var fixtureOffset: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+}
+
+struct FingerROMAttempt: Equatable, Sendable {
+    let mcpExcursion: Double
+    let pipExcursion: Double
+    let dipExcursion: Double
+    let maximumFlexion: Double
+    let maximumExtension: Double
+    let trackingConfidence: Double
+
+    var totalExcursion: Double { mcpExcursion + pipExcursion + dipExcursion }
+}
+
+struct DigitROMSummary: Equatable, Sendable {
+    let digit: HandDigit
+    let totalExcursion: Double
+    let maximumFlexion: Double
+    let maximumExtension: Double
+    let consistency: Double
+    let trackingConfidence: Double
+    let attemptCount: Int
+
+    var isAvailable: Bool { attemptCount >= 2 && trackingConfidence >= 0.6 }
 }
 
 struct SymptomResult: Equatable, Sendable {

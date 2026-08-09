@@ -1,9 +1,8 @@
 import SwiftUI
 
-struct AssessmentView: View {
+struct WristAssessmentView: View {
     let state: AppState
     let useDemoFallback: Bool
-    @State private var step = 0
 
     var body: some View {
         VStack(spacing: 24) {
@@ -11,15 +10,12 @@ struct AssessmentView: View {
                 .font(.largeTitle.bold())
             Text("Fixed conditions every demo day")
                 .font(.title2)
-            Text(step == 0
-                 ? "Two attempts each: centre, forward, backward, left, and right."
-                 : "Five paced repetitions: 2 seconds close, 1 second hold, 2 seconds release.")
+            InstructionMediaCard(kind: .wristAssessment)
+            Text("Two attempts each: centre, forward, backward, left, and right.")
                 .multilineTextAlignment(.center)
             Label(useDemoFallback ? "Demo fallback active" : "Live hand tracking", systemImage: "hand.raised")
                 .foregroundStyle(useDemoFallback ? .orange : .green)
-            Button(step == 0 ? "Complete fixed wrist checks" : "Complete fixed hand checks") {
-                if step == 0 { step = 1 } else { _ = state.completeAssessment(.fixture) }
-            }
+            Button("Complete fixed wrist checks") { _ = state.completeWristAssessment(AssessmentResult.fixture.wrist) }
             .buttonStyle(.borderedProminent)
             .controlSize(.extraLarge)
             Text("App-estimated movement measures; not clinical goniometer or strength measurements.")
@@ -27,5 +23,72 @@ struct AssessmentView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(60)
+    }
+}
+
+struct HandROMAssessmentView: View {
+    let state: AppState
+    let useDemoFallback: Bool
+    let liveObservation: MovementObservation
+    @State private var digitIndex = 0
+    @State private var attempt = 1
+    @State private var results: [HandDigit: DigitROMSummary] = [:]
+    @State private var liveMin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+    @State private var liveMax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+    @State private var recordedAttempts: [HandDigit: [FingerROMAttempt]] = [:]
+
+    private var digit: HandDigit { HandDigit.allCases[digitIndex] }
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Text("Hand range of motion").font(.largeTitle.bold())
+            InstructionMediaCard(kind: .fingerROM)
+            Text(digit == .thumb ? "Touch your thumb toward your little finger, then return." : "Bend and straighten your \(digit.title.lowercased()) finger.")
+                .font(.title2).multilineTextAlignment(.center)
+            Text("\(digit.title) • Attempt \(attempt) of 2")
+                .font(.headline).foregroundStyle(.secondary)
+            ProgressView(value: Double(digitIndex * 2 + attempt), total: 10)
+                .frame(maxWidth: 420)
+            Label(useDemoFallback ? "Demo values active" : "HandTrackingProvider joint tracking", systemImage: "hand.raised")
+                .foregroundStyle(useDemoFallback ? .orange : .green)
+            Button("Capture full motion") { capture() }
+                .buttonStyle(.borderedProminent).controlSize(.extraLarge)
+            Text("App-estimated joint excursion for comparison; not a clinical goniometer measurement.")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+        .padding(50)
+        .onChange(of: liveObservation) { _, observation in
+            guard !useDemoFallback, observation.isTracked, let sample = observation.digits[digit], sample.isTracked else { return }
+            let angles = SIMD3<Float>(sample.mcpAngle, sample.pipAngle, sample.dipAngle)
+            liveMin = simd.min(liveMin, angles)
+            liveMax = simd.max(liveMax, angles)
+        }
+    }
+
+    private func capture() {
+        if !useDemoFallback {
+            guard liveMin.x.isFinite, liveMax.x.isFinite else { return }
+            let excursion = liveMax - liveMin
+            let captured = FingerROMAttempt(mcpExcursion: Double(excursion.x), pipExcursion: Double(excursion.y), dipExcursion: Double(excursion.z), maximumFlexion: Double(liveMax.max()), maximumExtension: Double(liveMin.min()), trackingConfidence: liveObservation.quality == .good ? 0.95 : 0.65)
+            recordedAttempts[digit, default: []].append(captured)
+            liveMin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+            liveMax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        }
+        if attempt == 1 { attempt = 2; return }
+        var completedResults = results
+        if useDemoFallback {
+            completedResults[digit] = AssessmentResult.fixture.handROM[digit]
+        } else {
+            var session = HandROMAssessmentSession()
+            for captured in recordedAttempts[digit, default: []] { _ = session.record(captured, for: digit) }
+            completedResults[digit] = session.summary(for: digit)
+        }
+        results = completedResults
+        attempt = 1
+        if digitIndex < HandDigit.allCases.count - 1 {
+            digitIndex += 1
+        } else {
+            _ = state.completeHandROMAssessment(completedResults)
+        }
     }
 }

@@ -5,6 +5,7 @@ public enum RehabPalAssets {
     public static func loadPet(named name: String = "PlaceholderPet") async -> Entity {
         if let entity = try? await Entity(named: name, in: .module) {
             entity.name = "placeholder-pet-asset"
+            normalize(entity, maximumDimension: 0.22)
             return entity
         }
         return makePrimitivePet()
@@ -36,7 +37,19 @@ public enum RehabPalAssets {
         head.position = [0, 0.17, 0.025]
         root.addChild(body)
         root.addChild(head)
+        normalize(root, maximumDimension: 0.22)
         return root
+    }
+
+    @MainActor
+    public static func normalize(_ entity: Entity, maximumDimension: Float) {
+        var bounds = entity.visualBounds(relativeTo: entity)
+        let largest = max(bounds.extents.x, bounds.extents.y, bounds.extents.z)
+        guard largest.isFinite, largest > 0.0001 else { return }
+        let factor = min(1, maximumDimension / largest)
+        entity.scale *= SIMD3<Float>(repeating: factor)
+        bounds = entity.visualBounds(relativeTo: entity.parent)
+        entity.position += [-bounds.center.x, -bounds.min.y, -bounds.center.z]
     }
 
     @MainActor

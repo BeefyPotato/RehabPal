@@ -2,6 +2,26 @@ import XCTest
 @testable import RehabPal
 
 final class ExerciseSessionTests: XCTestCase {
+    @MainActor func testMovingHoleScheduleHasEightSafeTargetsAcrossAllQuadrants() {
+        let schedule = BalanceTargetSchedule(seed: 42)
+        XCTAssertEqual(schedule.targets.count, 8)
+        for quadrant in BalanceQuadrant.allCases {
+            XCTAssertEqual(schedule.targets.filter { $0.quadrant == quadrant }.count, 2)
+        }
+        XCTAssertTrue(schedule.targets.allSatisfy { abs($0.x) <= 0.21 && abs($0.z) <= 0.135 })
+        XCTAssertFalse(zip(schedule.targets, schedule.targets.dropFirst()).contains { $0.quadrant == $1.quadrant })
+        XCTAssertEqual(schedule, BalanceTargetSchedule(seed: 42))
+    }
+
+    @MainActor func testMovingHoleRequiresContinuousDwellAndPausesWhenTrackingIsLost() {
+        var session = MovingHoleBalanceSession(seed: 7, requiredRepetitions: 2, dwellSeconds: 0.5)
+        XCTAssertFalse(session.update(ballPosition: session.currentTarget.position, at: 0, isTracked: true))
+        XCTAssertFalse(session.update(ballPosition: session.currentTarget.position, at: 0.3, isTracked: false))
+        XCTAssertFalse(session.update(ballPosition: session.currentTarget.position, at: 0.6, isTracked: true))
+        XCTAssertFalse(session.update(ballPosition: session.currentTarget.position, at: 1.11, isTracked: true))
+        XCTAssertEqual(session.completedRepetitions, 1)
+    }
+
     func testBalanceScheduleDistributesEveryDirectionEqually() {
         for corrections in 1...4 {
             let schedule = BalanceSchedule(correctionsPerDirection: corrections, shuffle: false)

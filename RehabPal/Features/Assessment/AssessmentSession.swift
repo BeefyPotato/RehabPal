@@ -63,3 +63,38 @@ struct AssessmentSession: Sendable {
         return values.reduce(0, +) / values.count
     }
 }
+
+struct HandROMAssessmentSession: Sendable {
+    let attemptsPerDigit: Int
+    private(set) var attempts: [HandDigit: [FingerROMAttempt]] = [:]
+
+    init(attemptsPerDigit: Int = 2) {
+        self.attemptsPerDigit = attemptsPerDigit
+    }
+
+    mutating func record(_ attempt: FingerROMAttempt, for digit: HandDigit) -> Bool {
+        var digitAttempts = attempts[digit, default: []]
+        guard digitAttempts.count < attemptsPerDigit else { return true }
+        digitAttempts.append(attempt)
+        attempts[digit] = digitAttempts
+        return digitAttempts.count == attemptsPerDigit
+    }
+
+    func summary(for digit: HandDigit) -> DigitROMSummary? {
+        guard let values = attempts[digit], !values.isEmpty else { return nil }
+        func mean(_ keyPath: KeyPath<FingerROMAttempt, Double>) -> Double {
+            values.map { $0[keyPath: keyPath] }.reduce(0, +) / Double(values.count)
+        }
+        let totals = values.map(\.totalExcursion)
+        let spread = (totals.max() ?? 0) - (totals.min() ?? 0)
+        return DigitROMSummary(
+            digit: digit,
+            totalExcursion: totals.reduce(0, +) / Double(values.count),
+            maximumFlexion: mean(\.maximumFlexion),
+            maximumExtension: mean(\.maximumExtension),
+            consistency: max(0, 100 - spread),
+            trackingConfidence: mean(\.trackingConfidence),
+            attemptCount: values.count
+        )
+    }
+}

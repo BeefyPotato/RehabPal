@@ -9,9 +9,12 @@ struct ExerciseDemoView: View {
     let onCancel: () -> Void
 
     @State private var started = false
-    @State private var balance: BalanceSession
+    @State private var balance: MovingHoleBalanceSession
+    @State private var ballPosition = SIMD2<Float>.zero
+    @State private var lastBalanceTimestamp: TimeInterval?
     @State private var squeeze: SqueezeSession
     @State private var closure: Float = 0
+    @State private var completedResult: GameplayResult?
 
     init(
         exercise: ExerciseKind,
@@ -27,10 +30,7 @@ struct ExerciseDemoView: View {
         self.liveObservation = liveObservation
         self.onComplete = onComplete
         self.onCancel = onCancel
-        _balance = State(initialValue: BalanceSession(
-            correctionsPerDirection: prescription.balanceCorrectionsPerDirection,
-            requiredHoldSeconds: prescription.balanceHoldSeconds
-        ))
+        _balance = State(initialValue: MovingHoleBalanceSession(seed: 20260809))
         _squeeze = State(initialValue: SqueezeSession(
             repetitions: prescription.squeezeRepetitions,
             closeThreshold: prescription.squeezeCloseThreshold,
@@ -41,8 +41,17 @@ struct ExerciseDemoView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            if !started {
+            if let completedResult {
+                Image(systemName: "checkmark.circle.fill").font(.system(size: 72)).foregroundStyle(.green)
+                Text("Prescribed dose complete").font(.largeTitle.bold())
+                Text(exercise == .balance ? "8 targets reached" : "\(completedResult.completedDose) close–hold–open repetitions")
+                    .font(.title2)
+                Text("Return to today’s routine for your next step.").foregroundStyle(.secondary)
+                Button("Continue") { onComplete(completedResult) }
+                    .buttonStyle(.borderedProminent).controlSize(.extraLarge)
+            } else if !started {
                 Text(exercise.title).font(.largeTitle.bold())
+                InstructionMediaCard(kind: exercise == .balance ? .balance : .squeeze)
                 Text(introduction)
                     .font(.title3)
                     .multilineTextAlignment(.center)
@@ -54,15 +63,20 @@ struct ExerciseDemoView: View {
                 Button("Back", action: onCancel).buttonStyle(.borderless)
             } else if exercise == .balance {
                 BalancePlatformView(
-                    direction: balance.currentDirection,
+                    target: balance.currentTarget,
+                    ballPosition: ballPosition,
                     progress: balance.progress,
                     trackingVisible: useDemoFallback || liveObservation.isTracked
                 )
                 fallbackDisclosure
                 if useDemoFallback {
-                    Button("Hold centre (demo tracking)") {
-                        let done = balance.registerCentreHold(seconds: prescription.balanceHoldSeconds, isTracked: true)
-                        if done { onComplete(.fixture(for: .balance)) }
+                    Button("Guide ball into hole (demo tracking)") {
+                        ballPosition = balance.currentTarget.position
+                        let start = Double(balance.completedRepetitions)
+                        _ = balance.update(ballPosition: ballPosition, at: start, isTracked: true)
+                        let done = balance.update(ballPosition: ballPosition, at: start + 0.51, isTracked: true)
+                        ballPosition = .zero
+                        if done { finish(.balance) }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
@@ -84,7 +98,7 @@ struct ExerciseDemoView: View {
                         _ = squeeze.update(closure: closure, at: start + prescription.squeezeHoldSeconds + 0.1, isTracked: true)
                         closure = 0.15
                         let done = squeeze.update(closure: closure, at: start + prescription.squeezeHoldSeconds + 0.2, isTracked: true)
-                        if done { onComplete(.fixture(for: .squeeze)) }
+                        if done { finish(.squeeze) }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
@@ -100,8 +114,8 @@ struct ExerciseDemoView: View {
 
     private var introduction: String {
         exercise == .balance
-            ? "Guide the ball to centre for one prescribed correction in each direction."
-            : "Use your physical stress ball. Vision Pro observes hand closing and reopening, not grip force."
+            ? "Tilt your wrist to guide the ball into eight changing holes. Hold it there briefly to score each rep."
+            : "Pick up your real stress ball. Close, hold gently, and fully reopen; RehabPal observes motion, never grip force."
     }
 
     private var fallbackDisclosure: some View {
@@ -112,16 +126,21 @@ struct ExerciseDemoView: View {
 
     private func consumeLiveObservation(_ observation: MovementObservation) {
         if exercise == .balance {
-            guard observation.isTracked,
-                  let direction = balance.currentDirection,
-                  WristTargetDetector(targetMagnitude: 0.4, tolerance: 0.12)
-                    .classify(pitch: observation.wristPitch, roll: observation.wristRoll) == direction
-            else { return }
-            let done = balance.registerCentreHold(
-                seconds: prescription.balanceHoldSeconds,
-                isTracked: observation.isTracked
-            )
-            if done { onComplete(.fixture(for: .balance)) }
+            guard observation.isTracked else {
+                lastBalanceTimestamp = nil
+                _ = balance.update(ballPosition: ballPosition, at: observation.timestamp, isTracked: false)
+                return
+            }
+            let delta = min(max(observation.timestamp - (lastBalanceTimestamp ?? observation.timestamp), 0), 0.05)
+            lastBalanceTimestamp = observation.timestamp
+            let velocity = SIMD2<Float>(observation.wristRoll, observation.wristPitch) * 0.38
+            ballPosition += velocity * Float(delta)
+            ballPosition.x = min(max(ballPosition.x, -0.235), 0.235)
+            ballPosition.y = min(max(ballPosition.y, -0.16), 0.16)
+            let completedBefore = balance.completedRepetitions
+            let done = balance.update(ballPosition: ballPosition, at: observation.timestamp, isTracked: true)
+            if balance.completedRepetitions > completedBefore { ballPosition = .zero }
+            if done { finish(.balance) }
         } else {
             closure = observation.closure
             let done = squeeze.update(
@@ -129,7 +148,11 @@ struct ExerciseDemoView: View {
                 at: observation.timestamp,
                 isTracked: observation.isTracked
             )
-            if done { onComplete(.fixture(for: .squeeze)) }
+            if done { finish(.squeeze) }
         }
+    }
+
+    private func finish(_ exercise: ExerciseKind) {
+        completedResult = .fixture(for: exercise)
     }
 }

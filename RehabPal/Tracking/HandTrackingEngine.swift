@@ -60,6 +60,7 @@ final class HandTrackingEngine: MovementObservationSource {
         let forward = SIMD3<Float>(wristWorld.columns.2.x, wristWorld.columns.2.y, wristWorld.columns.2.z)
         let pitch = atan2(forward.y, max(0.0001, abs(forward.z)))
         let roll = atan2(forward.x, max(0.0001, abs(forward.z)))
+        let digits = digitKinematics(from: skeleton, anchorTransform: anchor.originFromAnchorTransform)
 
         latestObservation = MovementObservation(
             timestamp: timestamp,
@@ -68,7 +69,41 @@ final class HandTrackingEngine: MovementObservationSource {
             wristRoll: roll,
             closure: closure,
             thumbToIndexDistance: distance,
-            quality: .good
+            quality: digits.count == HandDigit.allCases.count ? .good : .low,
+            digits: digits
         )
+    }
+
+    private func digitKinematics(from skeleton: HandSkeleton, anchorTransform: simd_float4x4) -> [HandDigit: MovementObservation.DigitKinematics] {
+        let names: [HandDigit: [HandSkeleton.JointName]] = [
+            .thumb: [.thumbKnuckle, .thumbIntermediateBase, .thumbIntermediateTip, .thumbTip],
+            .index: [.indexFingerMetacarpal, .indexFingerKnuckle, .indexFingerIntermediateBase, .indexFingerIntermediateTip, .indexFingerTip],
+            .middle: [.middleFingerMetacarpal, .middleFingerKnuckle, .middleFingerIntermediateBase, .middleFingerIntermediateTip, .middleFingerTip],
+            .ring: [.ringFingerMetacarpal, .ringFingerKnuckle, .ringFingerIntermediateBase, .ringFingerIntermediateTip, .ringFingerTip],
+            .little: [.littleFingerMetacarpal, .littleFingerKnuckle, .littleFingerIntermediateBase, .littleFingerIntermediateTip, .littleFingerTip]
+        ]
+        let littleTip = skeleton.joint(.littleFingerTip)
+        let littlePosition = littleTip.isTracked ? worldPosition(littleTip, anchorTransform: anchorTransform) : nil
+        return Dictionary(uniqueKeysWithValues: names.compactMap { digit, jointNames in
+            let joints = jointNames.map { skeleton.joint($0) }
+            guard joints.allSatisfy(\.isTracked) else { return nil }
+            let points = joints.map { worldPosition($0, anchorTransform: anchorTransform) }
+            let angles: [Float]
+            if digit == .thumb {
+                angles = [jointAngle(points[0], points[1], points[2]), jointAngle(points[1], points[2], points[3]), 0]
+            } else {
+                angles = [jointAngle(points[0], points[1], points[2]), jointAngle(points[1], points[2], points[3]), jointAngle(points[2], points[3], points[4])]
+            }
+            let opposition = digit == .thumb && littlePosition != nil ? simd_distance(points.last!, littlePosition!) : nil
+            return (digit, MovementObservation.DigitKinematics(mcpAngle: angles[0], pipAngle: angles[1], dipAngle: angles[2], oppositionDistance: opposition, isTracked: true))
+        })
+    }
+
+    private func worldPosition(_ joint: HandSkeleton.Joint, anchorTransform: simd_float4x4) -> SIMD3<Float> {
+        MovementMath.worldTransform(anchor: anchorTransform, joint: joint.anchorFromJointTransform).translation
+    }
+
+    private func jointAngle(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) -> Float {
+        MovementMath.angle(between: a - b, and: c - b) * 180 / .pi
     }
 }
