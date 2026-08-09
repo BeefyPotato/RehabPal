@@ -62,6 +62,11 @@ struct RehabSessionOutcome: Equatable, Sendable {
     let payload: SessionOutcomePayload
 }
 
+struct ActiveRehabSession: Equatable, Sendable {
+    let request: RehabSessionRequest
+    let provenance: SessionProvenance
+}
+
 enum SessionRecoveryAction: Equatable, Sendable {
     case retryLive
     case enterDemoMode

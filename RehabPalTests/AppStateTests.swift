@@ -77,6 +77,39 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testDiagnosticCancelReturnsToRoutineAndRelaunchesThePendingAssessment() {
+        let state = unlockedRoutine()
+        XCTAssertTrue(state.completeExercise(.balance, result: .fixture(for: .balance)))
+        XCTAssertTrue(state.completeExercise(.squeeze, result: .fixture(for: .squeeze)))
+        XCTAssertEqual(state.stage, .wristAssessment)
+
+        let wristRequest = RehabSessionRequest(
+            experience: .wristAssessment,
+            prescription: state.prescription,
+            goal: 10
+        )
+        XCTAssertTrue(state.activateSession(wristRequest, provenance: .live))
+        XCTAssertTrue(state.cancelSessionAndReturnToRoutine())
+        XCTAssertEqual(state.stage, .routine)
+        XCTAssertNil(state.activeSession)
+        XCTAssertTrue(state.startAssessment())
+        XCTAssertEqual(state.stage, .wristAssessment)
+
+        XCTAssertTrue(state.completeWristAssessment(AssessmentResult.fixture.wrist))
+        let handRequest = RehabSessionRequest(
+            experience: .handAssessment,
+            prescription: state.prescription,
+            goal: 10
+        )
+        XCTAssertTrue(state.activateSession(handRequest, provenance: .demo))
+        XCTAssertTrue(state.cancelSessionAndReturnToRoutine())
+        XCTAssertEqual(state.stage, .routine)
+        XCTAssertNil(state.activeSession)
+        XCTAssertTrue(state.startAssessment())
+        XCTAssertEqual(state.stage, .handAssessment)
+    }
+
+    @MainActor
     func testResetClearsTodayAndPreservesPrescriptionAndHistory() {
         let state = unlockedRoutine()
         let prescription = state.prescription

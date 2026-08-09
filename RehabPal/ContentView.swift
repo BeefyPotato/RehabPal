@@ -5,8 +5,8 @@ struct ContentView: View {
     @State private var selectedExercise: ExerciseKind?
     @State private var handTracking: HandTrackingEngine
     @State private var session: RehabSessionCoordinator
+    @State private var immersiveLifecycle = ImmersiveSessionLifecycle()
     @State private var showingSettings = false
-    @State private var immersiveSpaceIsOpen = false
 
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
@@ -36,7 +36,7 @@ struct ContentView: View {
                             exercise: selectedExercise,
                             prescription: state.prescription,
                             useDemoFallback: session.isUsingDemoMode,
-                            liveObservation: handTracking.latestObservation
+                            liveObservation: session.compatibilityObservation
                         ) { result in
                             complete(.gameplay(result))
                             self.selectedExercise = nil
@@ -55,7 +55,7 @@ struct ContentView: View {
                 case .handAssessment:
                     HandROMAssessmentView(
                         useDemoFallback: session.isUsingDemoMode,
-                        liveObservation: handTracking.latestObservation
+                        liveObservation: session.compatibilityObservation
                     ) { result in
                         complete(.handAssessment(result))
                     }
@@ -91,7 +91,7 @@ struct ContentView: View {
             await monitorJointFrames()
         }
         .onDisappear {
-            session.cancel()
+            Task { await closeImmersiveSession() }
         }
     }
 
@@ -205,29 +205,45 @@ struct ContentView: View {
     }
 
     private func presentImmersiveSpace() async {
-        guard !immersiveSpaceIsOpen else { return }
+        guard let attempt = immersiveLifecycle.beginOpening() else { return }
         switch await openImmersiveSpace(id: RehabSessionCoordinator.immersiveSpaceID) {
         case .opened:
-            immersiveSpaceIsOpen = true
+            switch immersiveLifecycle.completeOpening(attempt) {
+            case .accepted:
+                guard let request = session.activeRequest,
+                      let provenance = session.provenance,
+                      state.activateSession(request, provenance: provenance) else {
+                    await closeImmersiveSession()
+                    return
+                }
+            case .dismissStaleOpen:
+                await dismissImmersiveSpace()
+            }
         case .userCancelled:
-            session.failImmersiveSpace("Opening the immersive session was cancelled.")
+            if immersiveLifecycle.failOpening(attempt) {
+                session.failImmersiveSpace("Opening the immersive session was cancelled.")
+            }
         case .error:
-            session.failImmersiveSpace("The immersive session could not be opened.")
+            if immersiveLifecycle.failOpening(attempt) {
+                session.failImmersiveSpace("The immersive session could not be opened.")
+            }
         @unknown default:
-            session.failImmersiveSpace("The immersive session could not be opened.")
+            if immersiveLifecycle.failOpening(attempt) {
+                session.failImmersiveSpace("The immersive session could not be opened.")
+            }
         }
     }
 
     private func closeImmersiveSession() async {
+        state.cancelActiveSession()
         session.cancel()
-        if immersiveSpaceIsOpen {
+        if immersiveLifecycle.close() {
             await dismissImmersiveSpace()
-            immersiveSpaceIsOpen = false
         }
     }
 
     private func monitorJointFrames() async {
-        while !Task.isCancelled, session.activeRequest != nil {
+        while !Task.isCancelled, session.shouldMonitorFrames {
             if session.provenance == .live || session.pauseReason != nil {
                 session.receiveJointFrame(
                     handTracking.latestJointFrame,
@@ -251,8 +267,14 @@ struct ContentView: View {
 
     private func cancelCurrentExperience() {
         session.cancel()
-        if case .routine = DemoRouter.screen(for: state) {
+        state.cancelActiveSession()
+        switch DemoRouter.screen(for: state) {
+        case .routine:
             selectedExercise = nil
+        case .wristAssessment, .handAssessment:
+            _ = state.cancelSessionAndReturnToRoutine()
+        default:
+            break
         }
     }
 

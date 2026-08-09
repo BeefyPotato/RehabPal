@@ -52,6 +52,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         )
 
         await coordinator.startLive(request)
+        XCTAssertTrue(coordinator.shouldMonitorFrames)
         coordinator.accept(SessionProgress(completed: 5, goal: 5, partial: 0))
         let result = GameplayResult(
             exercise: .squeeze,
@@ -69,6 +70,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         if let outcome {
             XCTAssertEqual(coordinator.phase, .completed(outcome))
         }
+        XCTAssertFalse(coordinator.shouldMonitorFrames)
     }
 
     @MainActor
@@ -91,6 +93,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(failure.recoveryActions, [.retryLive, .enterDemoMode, .cancel])
         XCTAssertNil(coordinator.provenance)
         XCTAssertFalse(coordinator.isUsingDemoMode)
+        XCTAssertFalse(coordinator.shouldMonitorFrames)
     }
 
     @MainActor
@@ -118,7 +121,8 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(demoCoordinator.startDemoMode())
         XCTAssertEqual(demoCoordinator.provenance, .demo)
         XCTAssertTrue(demoCoordinator.isUsingDemoMode)
-        XCTAssertEqual(demoCoordinator.latestJointFrame?.hand, .right)
+        XCTAssertEqual(demoCoordinator.currentFrame?.hand, .right)
+        XCTAssertFalse(demoCoordinator.shouldMonitorFrames)
         demoCoordinator.accept(SessionProgress(completed: 10, goal: 10, partial: 0))
         let demoOutcome = demoCoordinator.finish(
             with: .wristAssessment(AssessmentResult.fixture.wrist)
@@ -175,6 +179,33 @@ final class RehabSessionCoordinatorTests: XCTestCase {
     }
 
     @MainActor
+    func testCurrentFrameAndCompatibilityObservationNeverBypassAffectedHandAcceptance() async {
+        let live = TestLiveJointSource()
+        live.latestJointFrame = trackedFrame(hand: .left, at: 1)
+        let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
+        let request = RehabSessionRequest(
+            experience: .exercise(.balance),
+            prescription: .demo,
+            goal: 10
+        )
+        await coordinator.startLive(request)
+
+        XCTAssertNil(coordinator.currentFrame)
+        XCTAssertFalse(coordinator.compatibilityObservation.isTracked)
+
+        coordinator.receiveJointFrame(live.latestJointFrame, at: 1)
+        XCTAssertNil(coordinator.currentFrame)
+        XCTAssertFalse(coordinator.compatibilityObservation.isTracked)
+
+        let affectedFrame = trackedFrame(hand: .right, at: 2)
+        coordinator.receiveJointFrame(affectedFrame, at: 2)
+        XCTAssertEqual(coordinator.currentFrame?.hand, .right)
+        XCTAssertEqual(coordinator.currentFrame?.timestamp, 2)
+        XCTAssertTrue(coordinator.compatibilityObservation.isTracked)
+        XCTAssertEqual(coordinator.compatibilityObservation.timestamp, 2)
+    }
+
+    @MainActor
     func testCancelStopsTrackingAndClearsTheActiveSession() async {
         let live = TestLiveJointSource()
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
@@ -216,6 +247,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         )
         let outcome = try XCTUnwrap(coordinator.finish(with: .gameplay(result)))
 
+        XCTAssertTrue(state.activateSession(request, provenance: .live))
         XCTAssertTrue(state.route(outcome))
         XCTAssertEqual(state.exerciseResults[.balance], result)
         XCTAssertEqual(state.sessionOutcomes[.exercise(.balance)]?.provenance, .live)
@@ -246,6 +278,43 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         )
 
         XCTAssertFalse(state.route(outcome))
+        XCTAssertTrue(state.exerciseResults.isEmpty)
+    }
+
+    @MainActor
+    func testAppStateRejectsOutcomesWithoutTheActiveRequestAndProvenance() {
+        let state = AppState()
+        XCTAssertTrue(state.startRoutine())
+        XCTAssertTrue(state.answerMedication(taken: true))
+        let request = RehabSessionRequest(
+            experience: .exercise(.balance),
+            prescription: state.prescription,
+            goal: 10
+        )
+        let progress = SessionProgress(completed: 10, goal: 10, partial: 0)
+        let result = GameplayResult(
+            exercise: .balance,
+            prescribedDose: 10,
+            completedDose: 10,
+            trackingNote: "Measured"
+        )
+        let liveOutcome = RehabSessionOutcome(
+            request: request,
+            progress: progress,
+            provenance: .live,
+            payload: .gameplay(result)
+        )
+
+        XCTAssertFalse(state.route(liveOutcome))
+        XCTAssertTrue(state.activateSession(request, provenance: .live))
+
+        let demoOutcome = RehabSessionOutcome(
+            request: request,
+            progress: progress,
+            provenance: .demo,
+            payload: .gameplay(result)
+        )
+        XCTAssertFalse(state.route(demoOutcome))
         XCTAssertTrue(state.exerciseResults.isEmpty)
     }
 

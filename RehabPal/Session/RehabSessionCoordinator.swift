@@ -76,11 +76,24 @@ final class RehabSessionCoordinator {
 
     var isUsingDemoMode: Bool { provenance == .demo }
 
-    var latestJointFrame: HandJointFrame? {
-        if isUsingDemoMode {
-            return demoTracking?.latestJointFrame
+    var currentFrame: HandJointFrame? {
+        latestAcceptedJointFrame
+    }
+
+    var compatibilityObservation: MovementObservation {
+        guard let currentFrame else {
+            return .untracked(at: ProcessInfo.processInfo.systemUptime)
         }
-        return liveTracking.latestJointFrame
+        return MovementObservation(acceptedJointFrame: currentFrame)
+    }
+
+    var shouldMonitorFrames: Bool {
+        switch phase {
+        case .starting, .active(_, _, .live), .paused:
+            true
+        case .idle, .active(_, _, .demo), .failed, .completed:
+            false
+        }
     }
 
     func startLive(_ request: RehabSessionRequest) async {

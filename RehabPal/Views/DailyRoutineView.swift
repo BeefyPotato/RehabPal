@@ -17,6 +17,13 @@ struct DailyRoutineView: View {
             }
             Text(state.canStartAssessment ? "Daily assessment unlocked" : "Daily assessment unlocks after both exercises")
                 .foregroundStyle(state.canStartAssessment ? .green : .secondary)
+            if state.canStartAssessment {
+                Button("Continue daily assessment") {
+                    _ = state.startAssessment()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
         }
         .padding(50)
     }
