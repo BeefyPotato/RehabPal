@@ -61,6 +61,7 @@ struct AfterCareReport: Equatable, Sendable {
         let resultOrder: [(RehabExperience, String)] = [
             (.exercise(.balance), ExerciseKind.balance.title),
             (.exercise(.squeeze), ExerciseKind.squeeze.title),
+            (.exercise(.sheepDrop), ExerciseKind.sheepDrop.title),
             (.wristAssessment, "Wrist assessment"),
             (.handAssessment, "Hand ROM assessment")
         ]

@@ -3,7 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @State private var state: AppState
     @State private var selectedExercise: ExerciseKind?
-    @State private var squeezeStarted = false
+    @State private var exerciseStarted = false
     @State private var handTracking: HandTrackingEngine
     @State private var session: RehabSessionCoordinator
     @State private var immersiveLifecycle = ImmersiveSessionLifecycle()
@@ -36,15 +36,15 @@ struct ContentView: View {
                             exercise: selectedExercise,
                             prescription: state.prescription,
                             useDemoFallback: session.isUsingDemoMode,
-                            onBegin: { squeezeStarted = true }
+                            onBegin: { exerciseStarted = true }
                         ) {
                             self.selectedExercise = nil
-                            squeezeStarted = false
+                            exerciseStarted = false
                         }
                     } else {
                         DailyRoutineView(state: state) { exercise in
                             selectedExercise = exercise
-                            squeezeStarted = exercise != .squeeze
+                            exerciseStarted = Self.beginsRoutineExerciseImmediately(exercise)
                         }
                     }
                 case .wristAssessment:
@@ -93,7 +93,7 @@ struct ContentView: View {
                state.route(outcome) {
                 if case .exercise = outcome.request.experience {
                     selectedExercise = nil
-                    squeezeStarted = false
+                    exerciseStarted = false
                 }
             }
             if case .failed = phase {
@@ -174,15 +174,36 @@ struct ContentView: View {
     private var currentRequest: RehabSessionRequest? {
         switch DemoRouter.screen(for: state) {
         case .routine:
-            guard let selectedExercise else { return nil }
-            guard selectedExercise != .squeeze || squeezeStarted else { return nil }
-            return state.prescription.sessionRequest(for: .exercise(selectedExercise))
+            return Self.routineExerciseRequest(
+                for: selectedExercise,
+                hasBegun: exerciseStarted,
+                prescription: state.prescription
+            )
         case .wristAssessment:
             return state.prescription.sessionRequest(for: .wristAssessment)
         case .handAssessment:
             return state.prescription.sessionRequest(for: .handAssessment)
         default:
             return nil
+        }
+    }
+
+    static func routineExerciseRequest(
+        for exercise: ExerciseKind?,
+        hasBegun: Bool,
+        prescription: Prescription
+    ) -> RehabSessionRequest? {
+        guard let exercise else { return nil }
+        guard hasBegun || beginsRoutineExerciseImmediately(exercise) else { return nil }
+        return prescription.sessionRequest(for: .exercise(exercise))
+    }
+
+    static func beginsRoutineExerciseImmediately(_ exercise: ExerciseKind) -> Bool {
+        switch exercise {
+        case .balance:
+            true
+        case .squeeze, .sheepDrop:
+            false
         }
     }
 
@@ -293,7 +314,7 @@ struct ContentView: View {
         switch DemoRouter.screen(for: state) {
         case .routine:
             selectedExercise = nil
-            squeezeStarted = false
+            exerciseStarted = false
         case .wristAssessment, .handAssessment:
             _ = state.cancelSessionAndReturnToRoutine()
         default:

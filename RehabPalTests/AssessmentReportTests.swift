@@ -201,6 +201,23 @@ final class AssessmentReportTests: XCTestCase {
         )
     }
 
+    // Break caught: a simulated Sheep Drop outcome can be counted in the
+    // report while omitted from the explicit simulation disclosure.
+    @MainActor
+    func testReportLabelsSimulatedSheepDropProvenance() {
+        let report = AfterCareReport.make(
+            history: .fixture,
+            assessment: .fixture,
+            gameplay: [.fixture(for: .sheepDrop)],
+            symptoms: .comfortable,
+            reviewThreshold: 6,
+            sessionProvenance: [.exercise(.sheepDrop): .demo]
+        )
+
+        XCTAssertEqual(report.simulatedResultLabels, ["Sheep Drop"])
+        XCTAssertEqual(report.simulationNote, "SIMULATED DEMO RESULTS — Sheep Drop")
+    }
+
     func testFingerROMRequiresTwoAttemptsAndReportsExcursion() {
         var session = HandROMAssessmentSession(attemptsPerDigit: 2)
         let first = FingerROMAttempt(mcpExcursion: 35, pipExcursion: 42, dipExcursion: 24, maximumFlexion: 91, maximumExtension: 8, trackingConfidence: 0.9)
