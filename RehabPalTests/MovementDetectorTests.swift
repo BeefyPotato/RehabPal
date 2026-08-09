@@ -106,8 +106,9 @@ final class MovementDetectorTests: XCTestCase {
         XCTAssertNotNil(gate.update(metrics, at: 1.21))
     }
 
-    // Break caught: repeated stale timestamps can accumulate samples without proving elapsed observation time.
-    func testSqueezeGraspGateRejectsRepeatedTimestampAndRequiresANewContinuousWindow() {
+    // Break caught: RealityKit can poll the same tracking frame repeatedly; treating those reads as gaps
+    // resets an otherwise continuous one-second observation before the next unique frame arrives.
+    func testSqueezeGraspGateIgnoresDuplicateRenderReadsDuringContinuousWindow() {
         var gate = SqueezeGraspGate(
             stabilityDuration: 1,
             maximumInterSampleGap: 0.1,
@@ -117,10 +118,12 @@ final class MovementDetectorTests: XCTestCase {
 
         XCTAssertNil(gate.update(metrics, at: 0))
         XCTAssertNil(gate.update(metrics, at: 0))
-        for step in 1...10 {
+        for step in 1..<10 {
+            XCTAssertNil(gate.update(metrics, at: Double(step) * 0.1))
             XCTAssertNil(gate.update(metrics, at: Double(step) * 0.1))
         }
-        XCTAssertNotNil(gate.update(metrics, at: 1.1))
+        XCTAssertNotNil(gate.update(metrics, at: 1))
+        XCTAssertEqual(gate.bufferedSampleCount, 11)
     }
 
     // Break caught: high-frequency input can grow the one-second candidate history without a hard bound.

@@ -198,6 +198,35 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertEqual(session.statusLabel, "Grasp pose detected (not object verified)")
     }
 
+    // Break caught: repeatedly adding 0.1 can leave the final Demo Mode grasp sample just short
+    // of the required one-second stability duration, forcing an extra button press.
+    func testSqueezeDemoGraspSamplingCrossesOneSecondInOneAction() throws {
+        var session = SqueezeSession(
+            affectedHand: .right,
+            goal: 1,
+            closeThreshold: 0.7,
+            reopenThreshold: 0.3,
+            holdSeconds: 0.5,
+            isSimulated: true
+        )
+        let timestamps = SqueezeDemoSampling.graspTimestamps(startingAt: 4)
+
+        XCTAssertEqual(timestamps.count, 11)
+        XCTAssertEqual(try XCTUnwrap(timestamps.last) - XCTUnwrap(timestamps.first), 1, accuracy: 0.000_000_1)
+        for timestamp in timestamps.dropLast() {
+            XCTAssertEqual(
+                session.process(sample: squeezeSample(at: timestamp, closure: 0)),
+                .stabilizingGrasp
+            )
+        }
+        guard case .active = session.process(
+            sample: squeezeSample(at: try XCTUnwrap(timestamps.last), closure: 0)
+        ) else {
+            return XCTFail("Expected one demo action to accept the grasp baseline")
+        }
+        XCTAssertNotNil(session.facePose)
+    }
+
     // Break caught: threshold crossing can skip hold/reopen phases, double-count, or continue past the exact goal.
     func testSqueezeCountsCloseHoldReopenPhasesAndStopsAtExactGoal() throws {
         var session = SqueezeSession(

@@ -86,6 +86,12 @@ struct SqueezeHandSample: Equatable, Sendable {
     }
 }
 
+enum SqueezeDemoSampling {
+    static func graspTimestamps(startingAt start: TimeInterval) -> [TimeInterval] {
+        (0...10).map { start + Double($0) / 10 }
+    }
+}
+
 struct SqueezeBaseline: Equatable, Sendable {
     let metrics: SqueezeHandMetrics
 
@@ -156,10 +162,7 @@ struct SqueezeGraspGate: Sendable {
         }
         if let lastTimestamp {
             let interval = timestamp - lastTimestamp
-            guard interval > 0 else {
-                resetCandidate()
-                return nil
-            }
+            guard interval > 0 else { return nil }
             if interval > maximumInterSampleGap + 0.000_001 {
                 resetCandidate()
             }

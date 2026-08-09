@@ -5,9 +5,6 @@ import simd
 @MainActor
 @Observable
 final class SyntheticMovementSource: MovementObservationSource {
-    nonisolated static let defaultViewerPosition = SIMD3<Float>(0, 1.4, 0)
-    let viewerPosition = defaultViewerPosition
-
     private let hand: AffectedHand
     private(set) var latestObservation = MovementObservation(
         timestamp: 0,

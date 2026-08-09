@@ -73,6 +73,7 @@ struct SqueezeBuddyView: View {
                     phase: game.phase,
                     statusLabel: game.statusLabel,
                     faceVisible: game.facePose != nil && coordinator.currentViewerPosition != nil,
+                    graspDetected: game.facePose != nil,
                     pauseReason: coordinator.pauseReason,
                     isDemo: coordinator.isUsingDemoMode,
                     onDemoStep: performDemoStep
@@ -151,10 +152,11 @@ struct SqueezeBuddyView: View {
     private func performDemoStep() {
         guard coordinator.isUsingDemoMode, !game.isComplete else { return }
         if game.facePose == nil {
-            for _ in 0...10 {
-                handle(game.process(sample: demoSample(closure: 0, at: demoTimestamp)))
-                demoTimestamp += 0.1
+            let timestamps = SqueezeDemoSampling.graspTimestamps(startingAt: demoTimestamp)
+            for timestamp in timestamps {
+                handle(game.process(sample: demoSample(closure: 0, at: timestamp)))
             }
+            demoTimestamp = timestamps.last ?? demoTimestamp
             return
         }
         demoTimestamp += 0.1
@@ -186,6 +188,7 @@ private struct SqueezeHUD: View {
     let phase: SqueezeRepDetector.Phase
     let statusLabel: String?
     let faceVisible: Bool
+    let graspDetected: Bool
     let pauseReason: SessionPauseReason?
     let isDemo: Bool
     let onDemoStep: () -> Void
@@ -216,7 +219,7 @@ private struct SqueezeHUD: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             if isDemo, progress.completed < progress.goal {
-                Button(faceVisible ? "Complete close–hold–reopen (Demo Mode)" : "Detect grasp (Demo Mode)", action: onDemoStep)
+                Button(graspDetected ? "Complete close–hold–reopen (Demo Mode)" : "Detect grasp (Demo Mode)", action: onDemoStep)
                     .buttonStyle(.borderedProminent)
                 Text("SIMULATED")
                     .font(.caption2.bold())
