@@ -128,6 +128,163 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertTrue(state.isPlacementAvailable)
     }
 
+    // Break caught: a removed or changed unlocked placement can leave a
+    // forming-grasp dwell alive across a period with no valid table scene.
+    func testSheepDropPlacementChangeInvalidatesPartialInteraction() {
+        let detected = TablePlacement(
+            transform: simd_float4x4(translation: [0, 0.73, -0.55]),
+            source: .detected
+        )
+        let replacement = TablePlacement(
+            transform: simd_float4x4(translation: [0.1, 0.74, -0.5]),
+            source: .estimated
+        )
+        var state = SheepDropPlacementState()
+
+        XCTAssertEqual(state.receive(detected), .acquired)
+        XCTAssertEqual(state.receive(nil), .invalidated)
+        XCTAssertEqual(state.receive(replacement), .acquired)
+        XCTAssertEqual(state.receive(replacement), .unchanged)
+    }
+
+    // Break caught: render passes can repeatedly submit one retained frame
+    // with fresh render timestamps and incorrectly satisfy gesture dwell.
+    func testSheepDropFrameChronologyConsumesEachObservationOnlyOnce() {
+        var chronology = SheepDropInputChronology()
+        let first = HandJointFrame.synthetic(
+            hand: .right,
+            timestamp: 4,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )
+        let newer = HandJointFrame.synthetic(
+            hand: .right,
+            timestamp: 4.1,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )
+
+        XCTAssertEqual(chronology.consume(first)?.timestamp, 4)
+        XCTAssertNil(chronology.consume(first))
+        XCTAssertNil(chronology.consume(HandJointFrame.synthetic(
+            hand: .right,
+            timestamp: 3.9,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )))
+        XCTAssertEqual(chronology.consume(newer)?.timestamp, 4.1)
+    }
+
+    // Break caught: a retained open frame can be replayed across render time
+    // until the processor's release dwell completes without another sample.
+    func testRepeatedRetainedFrameCannotAdvanceReleaseDwell() throws {
+        let spawn = SheepDropSceneConfiguration.spawnPosition
+        let source = SyntheticMovementSource(hand: .right)
+        var chronology = SheepDropInputChronology()
+        var session = SheepDropSession(
+            affectedHand: .right,
+            goal: 1,
+            spawnPosition: spawn,
+            sheepCollisionRadius: SheepDropSceneConfiguration.sheepCollisionRadius
+        )
+        let resting = SheepDropObservation(
+            position: spawn,
+            velocity: .zero,
+            isRestingOnSpawnSurface: true,
+            isOutsideSafeVolume: false
+        )
+
+        source.setSheepDropPose(.clustered, centeredAt: spawn, at: 0)
+        _ = session.process(
+            frame: try XCTUnwrap(chronology.consume(source.latestJointFrame)),
+            observation: resting,
+            at: 0
+        )
+        source.setSheepDropPose(.clustered, centeredAt: spawn, at: 0.25)
+        _ = session.process(
+            frame: try XCTUnwrap(chronology.consume(source.latestJointFrame)),
+            observation: resting,
+            at: 0.25
+        )
+
+        source.setSheepDropPose(.open, centeredAt: spawn, at: 0.4)
+        let retainedOpen = try XCTUnwrap(chronology.consume(source.latestJointFrame))
+        _ = session.process(
+            frame: retainedOpen,
+            observation: resting,
+            at: retainedOpen.timestamp
+        )
+        XCTAssertNil(chronology.consume(source.latestJointFrame))
+        XCTAssertEqual(session.phase, .carrying)
+
+        source.setSheepDropPose(.open, centeredAt: spawn, at: 0.55)
+        let freshOpen = try XCTUnwrap(chronology.consume(source.latestJointFrame))
+        XCTAssertEqual(
+            session.process(
+                frame: freshOpen,
+                observation: resting,
+                at: freshOpen.timestamp
+            ).event,
+            .released
+        )
+    }
+
+    // Break caught: reacquiring a table after a placement gap can count time
+    // spent without a valid scene toward the original pickup dwell.
+    func testPlacementGapDiscardsFormingGraspDwell() throws {
+        let spawn = SheepDropSceneConfiguration.spawnPosition
+        let source = SyntheticMovementSource(hand: .right)
+        var session = SheepDropSession(
+            affectedHand: .right,
+            goal: 1,
+            spawnPosition: spawn,
+            sheepCollisionRadius: SheepDropSceneConfiguration.sheepCollisionRadius
+        )
+        let resting = SheepDropObservation(
+            position: spawn,
+            velocity: .zero,
+            isRestingOnSpawnSurface: true,
+            isOutsideSafeVolume: false
+        )
+        source.setSheepDropPose(.clustered, centeredAt: spawn, at: 0)
+        XCTAssertEqual(
+            session.process(
+                frame: source.latestJointFrame,
+                observation: resting,
+                at: 0
+            ).event,
+            .formingGrasp
+        )
+
+        var placement = SheepDropPlacementState()
+        _ = placement.receive(.estimatedReference)
+        XCTAssertEqual(placement.receive(nil), .invalidated)
+        _ = session.pause(requiresRecalibration: false)
+        _ = placement.receive(.estimatedReference)
+
+        source.setSheepDropPose(.clustered, centeredAt: spawn, at: 0.30)
+        XCTAssertEqual(
+            session.process(
+                frame: source.latestJointFrame,
+                observation: resting,
+                at: 0.30
+            ).event,
+            .formingGrasp
+        )
+        XCTAssertEqual(session.progress.partial, 0)
+    }
+
+    // Break caught: independent X/Z bounds form a square and accept diagonal
+    // positions farther than the approved 0.65 m horizontal radius.
+    func testSheepDropSafeVolumeUsesRadialHorizontalBoundary() {
+        XCTAssertFalse(SheepDropSceneConfiguration.isOutsideSafeVolume(
+            [0.45, 0.2, 0.45]
+        ))
+        XCTAssertTrue(SheepDropSceneConfiguration.isOutsideSafeVolume(
+            [0.60, 0.2, 0.60]
+        ))
+        XCTAssertTrue(SheepDropSceneConfiguration.isOutsideSafeVolume(
+            [0, SheepDropSceneConfiguration.safeMaximumY + 0.001, 0]
+        ))
+    }
+
     // Break caught: generic phase copy can hide tracking provenance, table
     // estimation, or the explicit five-finger release instruction.
     func testSheepDropHUDUsesApprovedCopyAndDisclosure() {

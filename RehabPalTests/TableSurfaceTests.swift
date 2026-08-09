@@ -212,6 +212,40 @@ final class TableSurfaceTests: XCTestCase {
         )
     }
 
+    // Break caught: once selected, one excessive same-anchor pose jump can
+    // strand the selector forever at the obsolete transform.
+    func testSelectedSurfaceJumpInvalidatesAndRestabilizesAtNewPose() {
+        var selector = TableSurfaceSelector(scanStartedAt: 10)
+        let initial = makeSurface(height: 0.73, timestamp: 10)
+        XCTAssertNil(selector.receive(.added(initial), at: 10))
+        XCTAssertEqual(
+            selector.receive(
+                .updated(initial.with(timestamp: 10.35)),
+                at: 10.35
+            )?.transform.translation.y,
+            0.73
+        )
+
+        let jumped = makeSurface(
+            id: initial.id,
+            height: 0.76,
+            normalDegrees: 5.1,
+            timestamp: 10.40
+        )
+        XCTAssertNil(selector.receive(.updated(jumped), at: 10.40))
+        XCTAssertNil(selector.receive(
+            .updated(jumped.with(timestamp: 10.74)),
+            at: 10.74
+        ))
+        XCTAssertEqual(
+            selector.receive(
+                .updated(jumped.with(timestamp: 10.75)),
+                at: 10.75
+            )?.transform.translation.y,
+            0.76
+        )
+    }
+
     private func makeSurface(
         id: UUID = UUID(),
         x: Float = 0,

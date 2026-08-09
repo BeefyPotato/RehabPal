@@ -2,6 +2,26 @@ import ARKit
 import Observation
 import simd
 
+enum TrackingProviderRole: Hashable, Sendable {
+    case hand
+    case world
+    case plane
+}
+
+enum TrackingProviderLifecycleState: Equatable, Sendable {
+    case initialized
+    case running
+    case paused
+    case stopped
+}
+
+struct TrackingProviderStateUpdate: Equatable, Sendable {
+    let roles: Set<TrackingProviderRole>
+    let state: TrackingProviderLifecycleState
+    let timestamp: TimeInterval
+    let failureMessage: String?
+}
+
 @MainActor
 @Observable
 final class HandTrackingEngine: MovementObservationSource {
@@ -10,6 +30,7 @@ final class HandTrackingEngine: MovementObservationSource {
     private let worldTracking: WorldTrackingProvider?
     private let planeDetection: PlaneDetectionProvider?
     private let tableSurfaceUpdates: (@MainActor () -> AsyncStream<TableSurfaceUpdate>)?
+    private let providerStateUpdates: (@MainActor () -> AsyncStream<TrackingProviderStateUpdate>)?
     private let supported: Bool
     private let runSession: @MainActor () async throws -> Void
     private let stopSession: @MainActor () -> Void
@@ -41,6 +62,7 @@ final class HandTrackingEngine: MovementObservationSource {
         self.worldTracking = worldTracking
         self.planeDetection = planeDetection
         tableSurfaceUpdates = nil
+        providerStateUpdates = nil
         supported = HandTrackingProvider.isSupported &&
             WorldTrackingProvider.isSupported &&
             PlaneDetectionProvider.isSupported
@@ -58,7 +80,8 @@ final class HandTrackingEngine: MovementObservationSource {
         isSupported: Bool,
         runSession: @escaping @MainActor () async throws -> Void,
         stopSession: @escaping @MainActor () -> Void,
-        tableSurfaceUpdates: (@MainActor () -> AsyncStream<TableSurfaceUpdate>)? = nil
+        tableSurfaceUpdates: (@MainActor () -> AsyncStream<TableSurfaceUpdate>)? = nil,
+        providerStateUpdates: (@MainActor () -> AsyncStream<TrackingProviderStateUpdate>)? = nil
     ) {
         session = nil
         provider = nil
@@ -68,6 +91,7 @@ final class HandTrackingEngine: MovementObservationSource {
         self.runSession = runSession
         self.stopSession = stopSession
         self.tableSurfaceUpdates = tableSurfaceUpdates
+        self.providerStateUpdates = providerStateUpdates
     }
 
     var isSupported: Bool { supported }
@@ -181,6 +205,31 @@ final class HandTrackingEngine: MovementObservationSource {
             }
         }
 
+        scheduleTableFallback(for: generation, scanStartedAt: scanStartedAt)
+
+        eventTask?.cancel()
+        if let session {
+            eventTask = Task { [weak self] in
+                for await event in session.events {
+                    guard !Task.isCancelled else { return }
+                    self?.consume(event, generation: generation)
+                }
+            }
+        } else if let providerStateUpdates {
+            let updates = providerStateUpdates()
+            eventTask = Task { [weak self] in
+                for await update in updates {
+                    guard !Task.isCancelled else { return }
+                    self?.consume(update, generation: generation)
+                }
+            }
+        }
+    }
+
+    private func scheduleTableFallback(
+        for generation: Int,
+        scanStartedAt: TimeInterval
+    ) {
         tableFallbackTask?.cancel()
         tableFallbackTask = Task { [weak self] in
             do {
@@ -192,16 +241,6 @@ final class HandTrackingEngine: MovementObservationSource {
                 generation: generation,
                 at: scanStartedAt + 3
             )
-        }
-
-        eventTask?.cancel()
-        if let session {
-            eventTask = Task { [weak self] in
-                for await event in session.events {
-                    guard !Task.isCancelled else { return }
-                    self?.consume(event, generation: generation)
-                }
-            }
         }
     }
 
@@ -350,21 +389,66 @@ final class HandTrackingEngine: MovementObservationSource {
             if status == .denied {
                 eventHandler?(.authorizationDenied, timestamp)
             }
-        case let .dataProviderStateChanged(_, newState, error):
+        case let .dataProviderStateChanged(dataProviders, newState, error):
+            let roles = Set(dataProviders.compactMap { provider in
+                if provider is HandTrackingProvider { return TrackingProviderRole.hand }
+                if provider is WorldTrackingProvider { return TrackingProviderRole.world }
+                if provider is PlaneDetectionProvider { return TrackingProviderRole.plane }
+                return nil
+            })
+            let state: TrackingProviderLifecycleState
             switch newState {
+            case .initialized:
+                state = .initialized
+            case .running:
+                state = .running
             case .paused:
-                eventHandler?(.interrupted, timestamp)
+                state = .paused
             case .stopped:
-                eventHandler?(
-                    .providerFailed(error?.localizedDescription ?? "ARKit data provider stopped"),
-                    timestamp
-                )
-            case .initialized, .running:
-                break
+                state = .stopped
             @unknown default:
-                eventHandler?(.interrupted, timestamp)
+                state = .paused
             }
+            consume(TrackingProviderStateUpdate(
+                roles: roles,
+                state: state,
+                timestamp: timestamp,
+                failureMessage: error?.localizedDescription
+            ), generation: generation)
         @unknown default:
+            break
+        }
+    }
+
+    private func consume(
+        _ update: TrackingProviderStateUpdate,
+        generation: Int
+    ) {
+        guard activeGeneration == generation else { return }
+        guard update.timestamp.isFinite else { return }
+
+        if update.roles.contains(.plane),
+           update.state == .paused || update.state == .stopped {
+            tableSelector = TableSurfaceSelector(scanStartedAt: update.timestamp)
+            tablePlacement = nil
+            scheduleTableFallback(
+                for: generation,
+                scanStartedAt: update.timestamp
+            )
+        }
+
+        guard !update.roles.isDisjoint(with: [.hand, .world]) else { return }
+        switch update.state {
+        case .paused:
+            eventHandler?(.interrupted, update.timestamp)
+        case .stopped:
+            eventHandler?(
+                .providerFailed(
+                    update.failureMessage ?? "ARKit data provider stopped"
+                ),
+                update.timestamp
+            )
+        case .initialized, .running:
             break
         }
     }

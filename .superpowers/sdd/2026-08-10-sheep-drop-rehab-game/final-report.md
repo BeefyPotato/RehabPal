@@ -2,15 +2,12 @@
 
 ## Status
 
-**DONE_WITH_CONCERNS.** The complete branch builds for generic visionOS, the
-focused generic test bundle builds, the static/specification review found no
-concrete integration defect, and the approved sheep asset remains intact.
-Fresh runtime XCTest did not complete within the bounded simulator window, so
-it is not reported as passing. Physical Vision Pro acceptance also remains
-unverified.
-
-No production source was changed during Task 6. This report is the only Task 6
-change.
+**DONE_WITH_CONCERNS after final-review fixes.** The complete branch builds for
+generic visionOS and the approved sheep asset remains intact. A subsequent
+whole-branch review found four concrete defects in this initial integration
+pass; all four are addressed in `final-fix-report.md`. Fresh runtime XCTest did
+not complete within the bounded simulator window, so it is not reported as
+passing. Physical Vision Pro acceptance also remains unverified.
 
 ## Reviewed range and commits
 
@@ -27,9 +24,10 @@ Task 5 head `39c70ec`:
 8. `7e1f5fd` — Add immersive Sheep Drop game
 9. `39c70ec` — Fix Sheep Drop review findings
 
-The audit covered the approved design, existing-game integration, lifecycle
-ownership, event/command idempotence, stale-frame behavior, demo provenance,
-and asset license/provenance. No concrete Task 6 defect was found.
+This initial audit covered the approved design, existing-game integration,
+lifecycle ownership, event/command idempotence, stale-frame behavior, demo
+provenance, and asset license/provenance. The later findings and their fixes
+supersede its original no-defect conclusion.
 
 ## Fresh Task 6 verification
 
@@ -156,9 +154,10 @@ does not replace it with a procedural model.
   transition; physics commands are absolute; scene placement locks once; and
   completion delivery is guarded once at the view boundary.
 - Existing games: no Balance, Squeeze, wrist-diagnostic, or finger-diagnostic
-  behavior was intentionally redesigned. The full generic products compile,
-  and the only known full-runtime failures are the unchanged baseline set
-  listed above.
+  behavior was intentionally redesigned. The full generic products compile.
+  The exact runtime comparison above starts at `000dc33`, so it establishes
+  only that Task 5 added no new full-suite failure; it is not a completed
+  whole-feature runtime comparison against `93af7d7`.
 - Disclosure/accessibility: the HUD keeps goal progress, provenance, table
   state, and phase guidance visible, and copy explicitly says the pose is
   inferred rather than force-measured.
@@ -166,8 +165,9 @@ does not replace it with a procedural model.
 Resolved findings from prior review rounds include launch/report disclosure,
 lifecycle timestamp/pause preservation, stale Sheep Drop positions, unlocked
 placement invalidation, sheep-only asset subtree selection, and removal of
-Demo-only controls from live sessions. Task 6 found no additional concrete
-finding requiring a TDD fix.
+Demo-only controls from live sessions. The subsequent whole-branch review found
+four additional defects; their regression-first fixes are recorded in
+`final-fix-report.md`.
 
 The Task 2 minor remains: injected tests do not directly execute production
 ARKit provider construction or `PlaneAnchor` mapping. Those boundaries compile
@@ -201,8 +201,8 @@ and are structurally reviewed, but require device/runtime acceptance.
 ## Remaining concerns
 
 1. Fresh Task 6 simulator XCTest did not finalize within the bounded window;
-   runtime status relies on the committed earlier per-task runs and Task 5's
-   exact baseline comparison.
+   runtime status relies on the committed earlier per-task runs. Task 5's
+   exact comparison begins at `000dc33`, not the feature baseline `93af7d7`.
 2. The complete physical Vision Pro checklist is unverified.
 3. The exact eight unrelated full-suite baseline failures remain outside the
    Sheep Drop task scope.

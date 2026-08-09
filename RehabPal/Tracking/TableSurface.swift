@@ -107,8 +107,16 @@ struct TableSurfaceSelector: Sendable {
         }
 
         if let selectedSurface {
-            guard selectedSurface.id == surface.id,
-                  Self.isCompatible(surface, with: selectedSurface) else {
+            guard selectedSurface.id == surface.id else {
+                return
+            }
+            guard Self.isCompatible(surface, with: selectedSurface) else {
+                self.selectedSurface = nil
+                currentPlacement = nil
+                candidates[surface.id] = Candidate(
+                    baseline: surface,
+                    stabilityStartedAt: timestamp
+                )
                 return
             }
             self.selectedSurface = surface

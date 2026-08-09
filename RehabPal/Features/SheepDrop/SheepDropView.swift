@@ -23,6 +23,12 @@ enum SheepDropSceneConfiguration {
         floorY + sheepCollisionRadius,
         0
     )
+
+    static func isOutsideSafeVolume(_ position: SIMD3<Float>) -> Bool {
+        simd_length(SIMD2<Float>(position.x, position.z)) > safeHorizontalRadius ||
+            position.y < safeMinimumY ||
+            position.y > safeMaximumY
+    }
 }
 
 struct SheepDropCoordinateSpace: Sendable {
@@ -89,6 +95,12 @@ struct SheepDropCoordinateSpace: Sendable {
     }
 }
 
+enum SheepDropPlacementUpdate: Equatable, Sendable {
+    case unchanged
+    case acquired
+    case invalidated
+}
+
 struct SheepDropPlacementState: Equatable, Sendable {
     private(set) var placement: TablePlacement?
     private(set) var isLocked = false
@@ -97,14 +109,46 @@ struct SheepDropPlacementState: Equatable, Sendable {
         placement != nil
     }
 
-    mutating func receive(_ placement: TablePlacement?) {
-        guard !isLocked else { return }
+    @discardableResult
+    mutating func receive(_ placement: TablePlacement?) -> SheepDropPlacementUpdate {
+        guard !isLocked else { return .unchanged }
+        let previous = self.placement
+        guard previous != placement else { return .unchanged }
         self.placement = placement
+        if previous != nil {
+            return .invalidated
+        }
+        return placement == nil ? .unchanged : .acquired
     }
 
     mutating func lockAtFirstPickup() {
         guard placement != nil else { return }
         isLocked = true
+    }
+}
+
+struct SheepDropInputChronology: Equatable, Sendable {
+    private(set) var lastConsumedTimestamp: TimeInterval?
+
+    mutating func consume(_ frame: HandJointFrame?) -> HandJointFrame? {
+        guard let frame,
+              frame.timestamp.isFinite,
+              lastConsumedTimestamp.map({ frame.timestamp > $0 }) ?? true else {
+            return nil
+        }
+        lastConsumedTimestamp = frame.timestamp
+        return frame
+    }
+}
+
+private extension SheepDropPhase {
+    var requiresFreshHandObservation: Bool {
+        switch self {
+        case .findingTable, .waitingForHand, .formingGrasp, .carrying, .paused:
+            true
+        case .falling, .success, .resetting, .complete:
+            false
+        }
     }
 }
 
@@ -246,6 +290,7 @@ struct SheepDropView: View {
     @State private var completionDelivered = false
     @State private var demoStage = SheepDropDemoStage.openNearSpawn
     @State private var demoTimestamp: TimeInterval = 0
+    @State private var inputChronology = SheepDropInputChronology()
 
     init(
         request: RehabSessionRequest,
@@ -503,16 +548,28 @@ struct SheepDropView: View {
               let coordinates = SheepDropCoordinateSpace(
                 tableTransform: placement.transform
               ) else {
+            discardPickupDwellIfNeeded()
             freezeSheep(at: sheepBody.position(relativeTo: sceneRoot))
             return
         }
 
-        let timestamp = coordinator.isUsingDemoMode
-            ? demoTimestamp
-            : ProcessInfo.processInfo.systemUptime
-        let frame = coordinator.isUsingDemoMode
+        let retainedFrame = coordinator.isUsingDemoMode
             ? demoSource.latestJointFrame
             : coordinates.penLocalFrame(coordinator.currentFrame)
+        let frame: HandJointFrame?
+        let timestamp: TimeInterval
+        if game.phase.requiresFreshHandObservation {
+            guard let freshFrame = inputChronology.consume(retainedFrame) else {
+                return
+            }
+            frame = freshFrame
+            timestamp = freshFrame.timestamp
+        } else {
+            frame = nil
+            timestamp = coordinator.isUsingDemoMode
+                ? demoTimestamp
+                : ProcessInfo.processInfo.systemUptime
+        }
         handle(game.process(
             frame: frame,
             observation: observation(in: coordinates),
@@ -521,7 +578,10 @@ struct SheepDropView: View {
     }
 
     private func refreshPlacement() {
-        placementState.receive(coordinator.currentTablePlacement)
+        let update = placementState.receive(coordinator.currentTablePlacement)
+        if update == .invalidated {
+            discardPickupDwellIfNeeded()
+        }
         guard let placement = placementState.placement else {
             sceneRoot.isEnabled = false
             return
@@ -530,6 +590,14 @@ struct SheepDropView: View {
             sceneRoot.setTransformMatrix(placement.transform, relativeTo: nil)
         }
         sceneRoot.isEnabled = assetLoadState == .ready
+    }
+
+    private func discardPickupDwellIfNeeded() {
+        guard game.phase == .formingGrasp else { return }
+        handle(
+            game.pause(requiresRecalibration: false),
+            coordinates: currentCoordinateSpace
+        )
     }
 
     private func processRecalibrationIfNeeded() -> Bool {
@@ -592,10 +660,7 @@ struct SheepDropView: View {
             position.y >= SheepDropSceneConfiguration.floorY &&
             position.y <= SheepDropSceneConfiguration.sheepCollisionRadius * 1.5 &&
             simd_length(velocity) <= SheepDropSession.maximumSettledSpeed
-        let outside = abs(position.x) > SheepDropSceneConfiguration.safeHorizontalRadius ||
-            abs(position.z) > SheepDropSceneConfiguration.safeHorizontalRadius ||
-            position.y < SheepDropSceneConfiguration.safeMinimumY ||
-            position.y > SheepDropSceneConfiguration.safeMaximumY
+        let outside = SheepDropSceneConfiguration.isOutsideSafeVolume(position)
         return SheepDropObservation(
             position: position,
             velocity: velocity,
@@ -741,10 +806,13 @@ struct SheepDropView: View {
         coordinates: SheepDropCoordinateSpace
     ) {
         demoSource.setSheepDropPose(pose, centeredAt: center, at: demoTimestamp)
+        guard let frame = inputChronology.consume(demoSource.latestJointFrame) else {
+            return
+        }
         handle(game.process(
-            frame: demoSource.latestJointFrame,
+            frame: frame,
             observation: observation(in: coordinates),
-            at: demoTimestamp
+            at: frame.timestamp
         ), coordinates: coordinates)
     }
 

@@ -139,6 +139,73 @@ final class HandTrackingEngineTests: XCTestCase {
         XCTAssertEqual(engine.tablePlacement?.transform.translation.x, 0.2)
     }
 
+    // Break caught: a plane-only pause can be promoted to a global hand
+    // interruption, pausing or failing every shared tracking experience.
+    func testPlaneOnlyProviderPauseInvalidatesTableWithoutInterruptingHands() async throws {
+        let tables = TableUpdateBoundary()
+        let providers = ProviderStateUpdateBoundary()
+        var events: [LiveHandJointSessionEvent] = []
+        let engine = HandTrackingEngine(
+            isSupported: true,
+            runSession: {},
+            stopSession: {},
+            tableSurfaceUpdates: { tables.makeStream() },
+            providerStateUpdates: { providers.makeStream() }
+        )
+        engine.setEventHandler { event, _ in events.append(event) }
+
+        try await engine.start()
+        let surface = tableSurface(id: UUID(), x: 0.1, timestamp: 10)
+        tables.yield(.added(surface), to: 0)
+        tables.yield(.updated(surface.with(timestamp: 10.4)), to: 0)
+        await waitUntil { engine.tablePlacement != nil }
+
+        providers.yield(TrackingProviderStateUpdate(
+            roles: [.plane],
+            state: .paused,
+            timestamp: 10.5,
+            failureMessage: nil
+        ), to: 0)
+        await waitUntil { engine.tablePlacement == nil }
+
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    // Break caught: provider-specific filtering can accidentally suppress
+    // the existing hand/world interruption and fatal-stop semantics.
+    func testHandAndWorldProviderTransitionsRemainSessionEvents() async throws {
+        let providers = ProviderStateUpdateBoundary()
+        var events: [LiveHandJointSessionEvent] = []
+        let engine = HandTrackingEngine(
+            isSupported: true,
+            runSession: {},
+            stopSession: {},
+            providerStateUpdates: { providers.makeStream() }
+        )
+        engine.setEventHandler { event, _ in events.append(event) }
+        try await engine.start()
+
+        providers.yield(TrackingProviderStateUpdate(
+            roles: [.hand],
+            state: .paused,
+            timestamp: 20,
+            failureMessage: nil
+        ), to: 0)
+        providers.yield(TrackingProviderStateUpdate(
+            roles: [.world],
+            state: .stopped,
+            timestamp: 20.1,
+            failureMessage: "World provider stopped"
+        ), to: 0)
+        await waitUntil { events.count == 2 }
+
+        XCTAssertEqual(events, [
+            .interrupted,
+            .providerFailed("World provider stopped")
+        ])
+    }
+
     private func tableSurface(
         id: UUID,
         x: Float,
@@ -176,6 +243,24 @@ private final class TableUpdateBoundary {
     }
 
     func yield(_ update: TableSurfaceUpdate, to id: Int) {
+        continuations[id]?.yield(update)
+    }
+}
+
+@MainActor
+private final class ProviderStateUpdateBoundary {
+    private var continuations: [Int: AsyncStream<TrackingProviderStateUpdate>.Continuation] = [:]
+    private var nextID = 0
+
+    func makeStream() -> AsyncStream<TrackingProviderStateUpdate> {
+        let id = nextID
+        nextID += 1
+        return AsyncStream { continuation in
+            continuations[id] = continuation
+        }
+    }
+
+    func yield(_ update: TrackingProviderStateUpdate, to id: Int) {
         continuations[id]?.yield(update)
     }
 }
