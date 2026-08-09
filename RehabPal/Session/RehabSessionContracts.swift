@@ -26,6 +26,30 @@ struct RehabSessionRequest: Equatable, Hashable, Sendable {
     }
 }
 
+extension RehabSessionRequest {
+    static let diagnosticSubjectCount = 5
+
+    var hasValidGoal: Bool {
+        guard goal > 0 else { return false }
+        switch experience {
+        case .exercise:
+            return true
+        case .wristAssessment, .handAssessment:
+            return goal.isMultiple(of: Self.diagnosticSubjectCount)
+        }
+    }
+
+    var diagnosticAttemptsPerSubject: Int? {
+        guard hasValidGoal else { return nil }
+        switch experience {
+        case .wristAssessment, .handAssessment:
+            return goal / Self.diagnosticSubjectCount
+        case .exercise:
+            return nil
+        }
+    }
+}
+
 struct SessionProgress: Equatable, Sendable {
     let completed: Int
     let goal: Int

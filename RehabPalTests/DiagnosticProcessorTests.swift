@@ -204,6 +204,26 @@ final class DiagnosticProcessorTests: XCTestCase {
         XCTAssertEqual(processor.trackingConfidence, 1, accuracy: 0.001)
     }
 
+    // Break caught: recalibration could clear the confidence watermark and count one recovered ARKit frame twice.
+    func testWristRecalibrationPreservesRecoveredFrameConfidenceWatermark() {
+        var processor = WristDiagnosticProcessor(affectedHand: .right, attemptsPerTarget: 1)
+        _ = processor.process(frame: wristFrame(at: 0))
+        _ = processor.process(frame: nil)
+        let recoveredFrame = wristFrame(at: 1)
+        _ = processor.process(frame: recoveredFrame)
+        XCTAssertEqual(processor.trackingConfidence, 2.0 / 3.0, accuracy: 0.001)
+
+        processor.pause(requiresRecalibration: true)
+        for _ in 0..<100 {
+            XCTAssertEqual(
+                processor.process(frame: recoveredFrame),
+                .waitingForCalibration
+            )
+        }
+
+        XCTAssertEqual(processor.trackingConfidence, 2.0 / 3.0, accuracy: 0.001)
+    }
+
     // Break caught: a missing observation can be read by many render updates and must count only once for confidence.
     func testWristDiagnosticConsumesMissingObservationGenerationOnce() {
         var processor = WristDiagnosticProcessor(affectedHand: .right, attemptsPerTarget: 1)

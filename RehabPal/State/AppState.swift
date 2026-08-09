@@ -88,7 +88,7 @@ final class AppState {
     ) -> Bool {
         guard activeSession == nil,
               request.affectedHand == prescription.affectedHand,
-              request.goal > 0,
+              request.hasValidGoal,
               canActivate(request.experience) else {
             return false
         }

@@ -103,3 +103,52 @@ xcodebuild test -quiet -project RehabPal.xcodeproj -scheme RehabPal \
 ## Commit
 
 The Task 5 commit is the commit containing this report; its hash is recorded in the task handoff.
+
+## Root review fix round 1
+
+### Corrected
+
+- Diagnostic completion is now acknowledged: wrist and finger views retain a completed processor result until `RehabSessionCoordinator.finish` succeeds. A completion observed while the coordinator is paused no longer marks the view finished, and is retried after tracking resumes and final progress can be accepted.
+- Wrist recalibration clears calibration/hold state without clearing the unique-frame confidence watermark. Re-reading the same recovered ARKit timestamp cannot inflate valid/required counts or act as a second calibration frame.
+- Diagnostic goal validity now lives on `RehabSessionRequest`: all goals must be positive, wrist/hand goals must be divisible by five, and `diagnosticAttemptsPerSubject` returns an exact quotient only for a valid diagnostic request.
+- Both `RehabSessionCoordinator.startLive` and `AppState.activateSession` enforce that shared contract. Wrist and finger immersive views consume the exact validated attempt count and render an explicit unavailable state if a malformed request is injected instead of flooring it.
+
+### Additional RED evidence
+
+```sh
+xcodebuild build-for-testing -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'generic/platform=visionOS' \
+  -only-testing:RehabPalTests/DiagnosticProcessorTests \
+  -only-testing:RehabPalTests/RehabSessionCoordinatorTests \
+  -only-testing:RehabPalTests/AppStateTests \
+  -derivedDataPath /private/tmp/RehabPalTask5Round1Red \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+- Exit 65 / `** TEST BUILD FAILED **` before implementation: the shared request attempt contract and retryable completion delivery did not exist, and the old goal validation was inaccessible outside the coordinator file.
+- Regressions cover paused-then-resumed completion delivery separately for wrist and finger payloads, duplicate recovered wrist frames after recalibration, exact diagnostic attempt derivation, and AppState rejection of malformed wrist/finger goals.
+
+### Round 1 GREEN evidence
+
+```sh
+xcodebuild build-for-testing -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'generic/platform=visionOS' \
+  -only-testing:RehabPalTests/DiagnosticProcessorTests \
+  -only-testing:RehabPalTests/RehabSessionCoordinatorTests \
+  -only-testing:RehabPalTests/AppStateTests \
+  -derivedDataPath /private/tmp/RehabPalTask5Round1FocusedGreen \
+  CODE_SIGNING_ALLOWED=NO
+
+xcodebuild build-for-testing -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'generic/platform=visionOS' \
+  -derivedDataPath /private/tmp/RehabPalTask5Round1FullGreen \
+  CODE_SIGNING_ALLOWED=NO
+
+xcodebuild build -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'generic/platform=visionOS' \
+  -derivedDataPath /private/tmp/RehabPalTask5Round1AppGreen \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+- All three commands exited 0. Existing unrelated warning output is unchanged.
+- Independent round-one re-review found no remaining Critical, Important, or Minor findings and marked the patch ready to merge.

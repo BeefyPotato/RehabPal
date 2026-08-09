@@ -347,18 +347,6 @@ final class RehabSessionCoordinator {
     }
 }
 
-private extension RehabSessionRequest {
-    var hasValidGoal: Bool {
-        guard goal > 0 else { return false }
-        switch experience {
-        case .exercise:
-            return true
-        case .wristAssessment, .handAssessment:
-            return goal.isMultiple(of: 5)
-        }
-    }
-}
-
 private extension SessionOutcomePayload {
     func matches(_ experience: RehabExperience) -> Bool {
         switch (experience, self) {

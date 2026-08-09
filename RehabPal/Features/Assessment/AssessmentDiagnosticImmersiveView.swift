@@ -1,6 +1,15 @@
 import RealityKit
 import SwiftUI
 
+struct DiagnosticCompletionDelivery: Sendable {
+    private(set) var isFinished = false
+
+    mutating func attempt(_ delivery: () -> Bool) {
+        guard !isFinished else { return }
+        isFinished = delivery()
+    }
+}
+
 private final class WristDiagnosticSubscriptionHolder {
     var update: EventSubscription?
 }
@@ -12,66 +21,74 @@ private final class FingerDiagnosticSubscriptionHolder {
 struct WristDiagnosticImmersiveView: View {
     let coordinator: RehabSessionCoordinator
     let onProgress: (SessionProgress) -> Void
-    let onComplete: (AssessmentResult.WristResult) -> Void
+    let onComplete: (AssessmentResult.WristResult) -> Bool
+    private let configurationError: String?
 
     @State private var processor: WristDiagnosticProcessor
     @State private var subscriptions = WristDiagnosticSubscriptionHolder()
     @State private var phaseLabel = "Neutral calibration"
     @State private var demoTimestamp: TimeInterval = 0
-    @State private var hasFinished = false
+    @State private var completionDelivery = DiagnosticCompletionDelivery()
 
     init(
         request: RehabSessionRequest,
         coordinator: RehabSessionCoordinator,
         onProgress: @escaping (SessionProgress) -> Void,
-        onComplete: @escaping (AssessmentResult.WristResult) -> Void
+        onComplete: @escaping (AssessmentResult.WristResult) -> Bool
     ) {
         self.coordinator = coordinator
         self.onProgress = onProgress
         self.onComplete = onComplete
-        let attempts = max(1, request.goal / WristAssessmentTarget.allCases.count)
+        let attempts = request.diagnosticAttemptsPerSubject
+        configurationError = attempts == nil
+            ? "The wrist diagnostic goal is invalid. Close this session and retry."
+            : nil
         _processor = State(initialValue: WristDiagnosticProcessor(
             affectedHand: request.affectedHand,
-            attemptsPerTarget: attempts,
+            attemptsPerTarget: attempts ?? 1,
             isSimulated: coordinator.isUsingDemoMode
         ))
     }
 
     var body: some View {
-        RealityView { content, attachments in
-            let root = Entity()
-            root.name = "WristDiagnosticRoot"
-            if let hud = attachments.entity(for: "wrist-diagnostic-hud") {
-                hud.position = [0, 1.15, -0.8]
-                root.addChild(hud)
-            }
-            content.add(root)
-            subscriptions.update = content.subscribe(to: SceneEvents.Update.self) { _ in
-                processLiveFrame()
-            }
-        } update: { content, attachments in
-            if let hud = attachments.entity(for: "wrist-diagnostic-hud"),
-               hud.parent == nil,
-               let root = content.entities.first {
-                hud.position = [0, 1.15, -0.8]
-                root.addChild(hud)
-            }
-        } attachments: {
-            Attachment(id: "wrist-diagnostic-hud") {
-                DiagnosticHUD(
-                    presentation: DiagnosticHUDPresentation(
-                        progress: processor.progress,
-                        subject: processor.currentTarget?.title ?? "Wrist assessment",
-                        phase: phaseLabel,
-                        isDemo: coordinator.isUsingDemoMode
-                    ),
-                    trackingConfidence: Double(processor.trackingConfidence),
-                    isPaused: coordinator.pauseReason != nil,
-                    demoActionTitle: processor.isCalibrated
-                        ? "Complete attempt (Demo Mode)"
-                        : "Calibrate neutral (Demo Mode)",
-                    onDemoStep: performDemoStep
-                )
+        if let configurationError {
+            DiagnosticConfigurationErrorView(message: configurationError)
+        } else {
+            RealityView { content, attachments in
+                let root = Entity()
+                root.name = "WristDiagnosticRoot"
+                if let hud = attachments.entity(for: "wrist-diagnostic-hud") {
+                    hud.position = [0, 1.15, -0.8]
+                    root.addChild(hud)
+                }
+                content.add(root)
+                subscriptions.update = content.subscribe(to: SceneEvents.Update.self) { _ in
+                    processLiveFrame()
+                }
+            } update: { content, attachments in
+                if let hud = attachments.entity(for: "wrist-diagnostic-hud"),
+                   hud.parent == nil,
+                   let root = content.entities.first {
+                    hud.position = [0, 1.15, -0.8]
+                    root.addChild(hud)
+                }
+            } attachments: {
+                Attachment(id: "wrist-diagnostic-hud") {
+                    DiagnosticHUD(
+                        presentation: DiagnosticHUDPresentation(
+                            progress: processor.progress,
+                            subject: processor.currentTarget?.title ?? "Wrist assessment",
+                            phase: phaseLabel,
+                            isDemo: coordinator.isUsingDemoMode
+                        ),
+                        trackingConfidence: Double(processor.trackingConfidence),
+                        isPaused: coordinator.pauseReason != nil,
+                        demoActionTitle: processor.isCalibrated
+                            ? "Complete attempt (Demo Mode)"
+                            : "Calibrate neutral (Demo Mode)",
+                        onDemoStep: performDemoStep
+                    )
+                }
             }
         }
     }
@@ -113,9 +130,9 @@ struct WristDiagnosticImmersiveView: View {
             onProgress(processor.progress)
         case let .completed(result):
             onProgress(processor.progress)
-            guard !hasFinished else { return }
-            hasFinished = true
-            onComplete(result)
+            completionDelivery.attempt {
+                onComplete(result)
+            }
         case .paused:
             phaseLabel = "Tracking paused"
         }
@@ -171,64 +188,72 @@ struct WristDiagnosticImmersiveView: View {
 struct FingerDiagnosticImmersiveView: View {
     let coordinator: RehabSessionCoordinator
     let onProgress: (SessionProgress) -> Void
-    let onComplete: ([HandDigit: DigitROMSummary]) -> Void
+    let onComplete: ([HandDigit: DigitROMSummary]) -> Bool
+    private let configurationError: String?
 
     @State private var processor: FingerROMDiagnosticProcessor
     @State private var subscriptions = FingerDiagnosticSubscriptionHolder()
     @State private var phaseLabel = "Stabilize extension for 0.3 seconds"
     @State private var demoTimestamp: TimeInterval = 0
-    @State private var hasFinished = false
+    @State private var completionDelivery = DiagnosticCompletionDelivery()
 
     init(
         request: RehabSessionRequest,
         coordinator: RehabSessionCoordinator,
         onProgress: @escaping (SessionProgress) -> Void,
-        onComplete: @escaping ([HandDigit: DigitROMSummary]) -> Void
+        onComplete: @escaping ([HandDigit: DigitROMSummary]) -> Bool
     ) {
         self.coordinator = coordinator
         self.onProgress = onProgress
         self.onComplete = onComplete
-        let attempts = max(1, request.goal / HandDigit.allCases.count)
+        let attempts = request.diagnosticAttemptsPerSubject
+        configurationError = attempts == nil
+            ? "The finger diagnostic goal is invalid. Close this session and retry."
+            : nil
         _processor = State(initialValue: FingerROMDiagnosticProcessor(
             affectedHand: request.affectedHand,
-            attemptsPerDigit: attempts,
+            attemptsPerDigit: attempts ?? 1,
             isSimulated: coordinator.isUsingDemoMode
         ))
     }
 
     var body: some View {
-        RealityView { content, attachments in
-            let root = Entity()
-            root.name = "FingerDiagnosticRoot"
-            if let hud = attachments.entity(for: "finger-diagnostic-hud") {
-                hud.position = [0, 1.15, -0.8]
-                root.addChild(hud)
-            }
-            content.add(root)
-            subscriptions.update = content.subscribe(to: SceneEvents.Update.self) { _ in
-                processLiveFrame()
-            }
-        } update: { content, attachments in
-            if let hud = attachments.entity(for: "finger-diagnostic-hud"),
-               hud.parent == nil,
-               let root = content.entities.first {
-                hud.position = [0, 1.15, -0.8]
-                root.addChild(hud)
-            }
-        } attachments: {
-            Attachment(id: "finger-diagnostic-hud") {
-                DiagnosticHUD(
-                    presentation: DiagnosticHUDPresentation(
-                        progress: processor.progress,
-                        subject: processor.currentDigit?.title ?? "Finger ROM",
-                        phase: phaseLabel,
-                        isDemo: coordinator.isUsingDemoMode
-                    ),
-                    trackingConfidence: processor.trackingConfidence,
-                    isPaused: coordinator.pauseReason != nil,
-                    demoActionTitle: "Complete ROM attempt (Demo Mode)",
-                    onDemoStep: performDemoStep
-                )
+        if let configurationError {
+            DiagnosticConfigurationErrorView(message: configurationError)
+        } else {
+            RealityView { content, attachments in
+                let root = Entity()
+                root.name = "FingerDiagnosticRoot"
+                if let hud = attachments.entity(for: "finger-diagnostic-hud") {
+                    hud.position = [0, 1.15, -0.8]
+                    root.addChild(hud)
+                }
+                content.add(root)
+                subscriptions.update = content.subscribe(to: SceneEvents.Update.self) { _ in
+                    processLiveFrame()
+                }
+            } update: { content, attachments in
+                if let hud = attachments.entity(for: "finger-diagnostic-hud"),
+                   hud.parent == nil,
+                   let root = content.entities.first {
+                    hud.position = [0, 1.15, -0.8]
+                    root.addChild(hud)
+                }
+            } attachments: {
+                Attachment(id: "finger-diagnostic-hud") {
+                    DiagnosticHUD(
+                        presentation: DiagnosticHUDPresentation(
+                            progress: processor.progress,
+                            subject: processor.currentDigit?.title ?? "Finger ROM",
+                            phase: phaseLabel,
+                            isDemo: coordinator.isUsingDemoMode
+                        ),
+                        trackingConfidence: processor.trackingConfidence,
+                        isPaused: coordinator.pauseReason != nil,
+                        demoActionTitle: "Complete ROM attempt (Demo Mode)",
+                        onDemoStep: performDemoStep
+                    )
+                }
             }
         }
     }
@@ -266,9 +291,9 @@ struct FingerDiagnosticImmersiveView: View {
             onProgress(processor.progress)
         case let .completed(result):
             onProgress(processor.progress)
-            guard !hasFinished else { return }
-            hasFinished = true
-            onComplete(result)
+            completionDelivery.attempt {
+                onComplete(result)
+            }
         case .paused:
             phaseLabel = "Tracking paused"
         }
@@ -322,6 +347,18 @@ struct FingerDiagnosticImmersiveView: View {
                 interiorAngles: SIMD3<Float>(repeating: 180) - flexion,
                 oppositionDistance: opposition
             )
+        )
+    }
+}
+
+private struct DiagnosticConfigurationErrorView: View {
+    let message: String
+
+    var body: some View {
+        ContentUnavailableView(
+            "Diagnostic unavailable",
+            systemImage: "exclamationmark.triangle",
+            description: Text(message)
         )
     }
 }

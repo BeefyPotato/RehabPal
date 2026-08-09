@@ -60,11 +60,11 @@ struct SharedRehabImmersiveView: View {
         _ = session.finish(with: .gameplay(result))
     }
 
-    private func finishWristAssessment(_ result: AssessmentResult.WristResult) {
-        _ = session.finish(with: .wristAssessment(result))
+    private func finishWristAssessment(_ result: AssessmentResult.WristResult) -> Bool {
+        session.finish(with: .wristAssessment(result)) != nil
     }
 
-    private func finishHandAssessment(_ result: [HandDigit: DigitROMSummary]) {
-        _ = session.finish(with: .handAssessment(result))
+    private func finishHandAssessment(_ result: [HandDigit: DigitROMSummary]) -> Bool {
+        session.finish(with: .handAssessment(result)) != nil
     }
 }

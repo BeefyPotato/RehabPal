@@ -19,6 +19,32 @@ final class RehabSessionCoordinatorTests: XCTestCase {
     }
 
     @MainActor
+    func testSharedDiagnosticGoalContractReturnsOnlyExactValidatedAttempts() {
+        let wrist = RehabSessionRequest(
+            experience: .wristAssessment,
+            prescription: .demo,
+            goal: 10
+        )
+        let malformedHand = RehabSessionRequest(
+            experience: .handAssessment,
+            prescription: .demo,
+            goal: 6
+        )
+        let exercise = RehabSessionRequest(
+            experience: .exercise(.balance),
+            prescription: .demo,
+            goal: 6
+        )
+
+        XCTAssertTrue(wrist.hasValidGoal)
+        XCTAssertEqual(wrist.diagnosticAttemptsPerSubject, 2)
+        XCTAssertFalse(malformedHand.hasValidGoal)
+        XCTAssertNil(malformedHand.diagnosticAttemptsPerSubject)
+        XCTAssertTrue(exercise.hasValidGoal)
+        XCTAssertNil(exercise.diagnosticAttemptsPerSubject)
+    }
+
+    @MainActor
     func testCoordinatorPublishesTheCurrentViewerPositionFromLiveTracking() {
         let live = TestLiveJointSource()
         live.viewerPosition = SIMD3<Float>(0.2, 1.3, -0.1)
@@ -258,6 +284,70 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(observations[1].frame?.timestamp, 1.05)
         XCTAssertLessThan(observations[0].sequence, observations[1].sequence)
         XCTAssertTrue(coordinator.consumeDiagnosticObservations().isEmpty)
+    }
+
+    @MainActor
+    func testWristCompletionRemainsPendingUntilCoordinatorResumes() async {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource()
+        )
+        let request = RehabSessionRequest(
+            experience: .wristAssessment,
+            prescription: .demo,
+            goal: 5
+        )
+        await coordinator.startLive(request)
+        coordinator.receiveJointFrame(nil, at: 1)
+        var delivery = DiagnosticCompletionDelivery()
+
+        delivery.attempt {
+            coordinator.finish(with: .wristAssessment(AssessmentResult.fixture.wrist)) != nil
+        }
+        XCTAssertFalse(delivery.isFinished)
+
+        coordinator.receiveJointFrame(trackedFrame(hand: .right, at: 1.1), at: 1.1)
+        coordinator.accept(SessionProgress(completed: 5, goal: 5, partial: 0))
+        delivery.attempt {
+            coordinator.finish(with: .wristAssessment(AssessmentResult.fixture.wrist)) != nil
+        }
+
+        XCTAssertTrue(delivery.isFinished)
+        guard case .completed = coordinator.phase else {
+            return XCTFail("Expected the retained wrist completion to finish after resume")
+        }
+    }
+
+    @MainActor
+    func testFingerCompletionRemainsPendingUntilCoordinatorResumes() async {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource()
+        )
+        let request = RehabSessionRequest(
+            experience: .handAssessment,
+            prescription: .demo,
+            goal: 5
+        )
+        await coordinator.startLive(request)
+        coordinator.receiveJointFrame(nil, at: 1)
+        var delivery = DiagnosticCompletionDelivery()
+
+        delivery.attempt {
+            coordinator.finish(with: .handAssessment(AssessmentResult.fixture.handROM)) != nil
+        }
+        XCTAssertFalse(delivery.isFinished)
+
+        coordinator.receiveJointFrame(trackedFrame(hand: .right, at: 1.1), at: 1.1)
+        coordinator.accept(SessionProgress(completed: 5, goal: 5, partial: 0))
+        delivery.attempt {
+            coordinator.finish(with: .handAssessment(AssessmentResult.fixture.handROM)) != nil
+        }
+
+        XCTAssertTrue(delivery.isFinished)
+        guard case .completed = coordinator.phase else {
+            return XCTFail("Expected the retained finger completion to finish after resume")
+        }
     }
 
     @MainActor

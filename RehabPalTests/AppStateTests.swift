@@ -110,6 +110,30 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testActivateSessionRejectsMalformedWristAndFingerDiagnosticGoals() {
+        let state = unlockedRoutine()
+        XCTAssertTrue(state.completeExercise(.balance, result: .fixture(for: .balance)))
+        XCTAssertTrue(state.completeExercise(.squeeze, result: .fixture(for: .squeeze)))
+
+        let malformedWrist = RehabSessionRequest(
+            experience: .wristAssessment,
+            prescription: state.prescription,
+            goal: 6
+        )
+        XCTAssertFalse(state.activateSession(malformedWrist, provenance: .live))
+        XCTAssertNil(state.activeSession)
+
+        XCTAssertTrue(state.completeWristAssessment(AssessmentResult.fixture.wrist))
+        let malformedHand = RehabSessionRequest(
+            experience: .handAssessment,
+            prescription: state.prescription,
+            goal: 9
+        )
+        XCTAssertFalse(state.activateSession(malformedHand, provenance: .demo))
+        XCTAssertNil(state.activeSession)
+    }
+
+    @MainActor
     func testResetClearsTodayAndPreservesPrescriptionAndHistory() {
         let state = unlockedRoutine()
         let prescription = state.prescription

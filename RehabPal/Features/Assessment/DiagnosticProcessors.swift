@@ -111,9 +111,10 @@ struct WristDiagnosticProcessor: Sendable {
         }
         if let lastObservedFrameTimestamp,
            frame.timestamp <= lastObservedFrameTimestamp {
+            if calibration == nil { return .waitingForCalibration }
             return lastObservedFrameWasValid
                 ? currentEvent(at: frame.timestamp)
-                : calibration == nil ? .waitingForCalibration : .paused
+                : .paused
         }
         lastObservedFrameTimestamp = frame.timestamp
         requiredFrameCount += 1
@@ -215,8 +216,6 @@ struct WristDiagnosticProcessor: Sendable {
         if requiresRecalibration {
             calibration = nil
             lastFrameTimestamp = nil
-            lastObservedFrameTimestamp = nil
-            lastObservedFrameWasValid = false
         }
     }
 
