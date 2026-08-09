@@ -8,6 +8,7 @@ final class HandTrackingEngine: MovementObservationSource {
     private let session = ARKitSession()
     private let provider = HandTrackingProvider()
     private(set) var latestObservation = MovementObservation.untracked(at: 0)
+    private(set) var latestJointFrame: HandJointFrame?
     private(set) var lastError: String?
     let isFallback = false
 
@@ -30,10 +31,13 @@ final class HandTrackingEngine: MovementObservationSource {
 
     private func consume(_ anchor: HandAnchor) {
         let timestamp = ProcessInfo.processInfo.systemUptime
-        guard anchor.isTracked, let skeleton = anchor.handSkeleton else {
+        guard let frame = HandJointFrame(anchor: anchor, timestamp: timestamp),
+              let skeleton = anchor.handSkeleton else {
+            latestJointFrame = nil
             latestObservation = .untracked(at: timestamp)
             return
         }
+        latestJointFrame = frame
 
         let wrist = skeleton.joint(.wrist)
         let indexTip = skeleton.joint(.indexFingerTip)

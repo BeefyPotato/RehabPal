@@ -1,9 +1,11 @@
 import Foundation
 import Observation
+import simd
 
 @MainActor
 @Observable
 final class SyntheticMovementSource: MovementObservationSource {
+    private let hand: AffectedHand
     private(set) var latestObservation = MovementObservation(
         timestamp: 0,
         isTracked: true,
@@ -13,7 +15,17 @@ final class SyntheticMovementSource: MovementObservationSource {
         thumbToIndexDistance: 0.08,
         quality: .good
     )
+    private(set) var latestJointFrame: HandJointFrame?
     let isFallback = true
+
+    init(hand: AffectedHand = .right) {
+        self.hand = hand
+        self.latestJointFrame = Self.jointFrame(
+            hand: hand,
+            timestamp: 0,
+            observation: latestObservation
+        )
+    }
 
     func setWrist(direction: WristDirection, progress: Float, at timestamp: TimeInterval) {
         let value = min(max(progress, 0), 1) * 0.4
@@ -26,6 +38,7 @@ final class SyntheticMovementSource: MovementObservationSource {
             thumbToIndexDistance: latestObservation.thumbToIndexDistance,
             quality: .good
         )
+        publishJointFrame()
     }
 
     func setClosure(_ closure: Float, at timestamp: TimeInterval) {
@@ -38,6 +51,7 @@ final class SyntheticMovementSource: MovementObservationSource {
             thumbToIndexDistance: 0.08 * (1 - closure),
             quality: .good
         )
+        publishJointFrame()
     }
 
     func setTrackingVisible(_ visible: Bool, at timestamp: TimeInterval) {
@@ -54,5 +68,43 @@ final class SyntheticMovementSource: MovementObservationSource {
         } else {
             latestObservation = .untracked(at: timestamp)
         }
+        publishJointFrame()
+    }
+
+    private func publishJointFrame() {
+        latestJointFrame = Self.jointFrame(
+            hand: hand,
+            timestamp: latestObservation.timestamp,
+            observation: latestObservation
+        )
+    }
+
+    private static func jointFrame(
+        hand: AffectedHand,
+        timestamp: TimeInterval,
+        observation: MovementObservation
+    ) -> HandJointFrame {
+        guard observation.isTracked else {
+            return .synthetic(hand: hand, timestamp: timestamp, joints: [.wrist: .untracked])
+        }
+
+        let wristTransform = MovementMath.wristTransform(
+            pitch: observation.wristPitch,
+            roll: observation.wristRoll
+        )
+        var joints = Dictionary(uniqueKeysWithValues: HandJoint.allCases.map { joint in
+            (joint, HandJointSample.tracked(transform: wristTransform))
+        })
+
+        let tipDistance = observation.thumbToIndexDistance ?? 0.08
+        joints[.thumbTip] = .tracked(transform: MovementMath.worldTransform(
+            anchor: wristTransform,
+            joint: simd_float4x4(translation: SIMD3<Float>(-tipDistance / 2, 0, 0))
+        ))
+        joints[.indexFingerTip] = .tracked(transform: MovementMath.worldTransform(
+            anchor: wristTransform,
+            joint: simd_float4x4(translation: SIMD3<Float>(tipDistance / 2, 0, 0))
+        ))
+        return .synthetic(hand: hand, timestamp: timestamp, joints: joints)
     }
 }
