@@ -28,6 +28,25 @@ final class RehabSessionCoordinatorTests: XCTestCase {
     }
 
     @MainActor
+    func testCoordinatorPublishesNoFallbackForMissingLivePoseAndExplicitDemoViewerPose() async {
+        let live = TestLiveJointSource(startResults: [.failure(TestLiveError.denied)])
+        let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
+        let request = RehabSessionRequest(
+            experience: .exercise(.squeeze),
+            prescription: .demo,
+            goal: 5
+        )
+
+        await coordinator.startLive(request)
+        XCTAssertNil(coordinator.currentViewerPosition)
+        XCTAssertTrue(coordinator.startDemoMode())
+        XCTAssertEqual(
+            coordinator.currentViewerPosition,
+            SyntheticMovementSource.defaultViewerPosition
+        )
+    }
+
+    @MainActor
     func testCoordinatorRejectsARequestForAnyHandOtherThanThePrescription() async {
         let live = TestLiveJointSource()
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)

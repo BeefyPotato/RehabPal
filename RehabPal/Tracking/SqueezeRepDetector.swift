@@ -32,10 +32,11 @@ struct SqueezeRepDetector: Sendable {
             phase = .closing
             closedSince = timestamp
         case .closing:
-            if closure <= reopenThreshold {
-                phase = .open
-                closedSince = nil
-            } else if let closedSince, timestamp - closedSince >= holdSeconds {
+            guard closure >= closeThreshold else {
+                resetPartial()
+                return false
+            }
+            if let closedSince, timestamp - closedSince >= holdSeconds {
                 phase = .held
             }
         case .held:

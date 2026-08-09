@@ -181,7 +181,16 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertNil(session.facePose)
 
         XCTAssertEqual(session.process(sample: .init(hand: .right, timestamp: 2, metrics: metrics)), .stabilizingGrasp)
-        XCTAssertEqual(session.process(sample: .init(hand: .right, timestamp: 2.99, metrics: metrics)), .stabilizingGrasp)
+        for step in 1..<10 {
+            XCTAssertEqual(
+                session.process(sample: .init(
+                    hand: .right,
+                    timestamp: 2 + Double(step) * 0.1,
+                    metrics: metrics
+                )),
+                .stabilizingGrasp
+            )
+        }
         guard case .active = session.process(sample: .init(hand: .right, timestamp: 3, metrics: metrics)) else {
             return XCTFail("Expected accepted grasp to activate squeeze")
         }
@@ -271,7 +280,15 @@ final class ExerciseSessionTests: XCTestCase {
     }
 
     private func acceptSqueezeBaseline(in session: inout SqueezeSession, startingAt timestamp: TimeInterval) {
-        XCTAssertEqual(session.process(sample: squeezeSample(at: timestamp, closure: 0)), .stabilizingGrasp)
+        for step in 0..<10 {
+            XCTAssertEqual(
+                session.process(sample: squeezeSample(
+                    at: timestamp + Double(step) * 0.1,
+                    closure: 0
+                )),
+                .stabilizingGrasp
+            )
+        }
         guard case .active = session.process(sample: squeezeSample(at: timestamp + 1, closure: 0)) else {
             return XCTFail("Expected stable grasp baseline")
         }

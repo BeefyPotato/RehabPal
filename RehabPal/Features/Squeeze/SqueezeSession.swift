@@ -120,14 +120,33 @@ struct SqueezeGraspGate: Sendable {
     static let minimumCuppedFlexion: Float = 0.15
 
     let stabilityDuration: TimeInterval
+    let maximumInterSampleGap: TimeInterval
+    let maximumBufferedSamples: Int
     private(set) var baseline: SqueezeBaseline?
     private var candidateStartedAt: TimeInterval?
     private var lastTimestamp: TimeInterval?
     private var candidateMetrics: [SqueezeHandMetrics] = []
+    private var candidateSampleTotal = 0
+    private var radiusSum: Float = 0
+    private var centerSum = SIMD3<Float>.zero
+    private var tipToPalmSum: Float = 0
+    private var flexionSum: Float = 0
+    private var minimumRadius: Float = .greatestFiniteMagnitude
+    private var maximumRadius: Float = 0
+    private var firstCenter: SIMD3<Float>?
+    private var maximumCenterDrift: Float = 0
 
-    init(stabilityDuration: TimeInterval = 1) {
+    init(
+        stabilityDuration: TimeInterval = 1,
+        maximumInterSampleGap: TimeInterval = 0.1,
+        maximumBufferedSamples: Int = 64
+    ) {
         self.stabilityDuration = stabilityDuration
+        self.maximumInterSampleGap = max(0.001, maximumInterSampleGap)
+        self.maximumBufferedSamples = max(1, maximumBufferedSamples)
     }
+
+    var bufferedSampleCount: Int { candidateMetrics.count }
 
     mutating func update(_ metrics: SqueezeHandMetrics, at timestamp: TimeInterval) -> SqueezeBaseline? {
         if let baseline { return baseline }
@@ -135,29 +154,47 @@ struct SqueezeGraspGate: Sendable {
             resetCandidate()
             return nil
         }
-        if let lastTimestamp, timestamp < lastTimestamp {
-            resetCandidate()
+        if let lastTimestamp {
+            let interval = timestamp - lastTimestamp
+            guard interval > 0 else {
+                resetCandidate()
+                return nil
+            }
+            if interval > maximumInterSampleGap + 0.000_001 {
+                resetCandidate()
+            }
         }
         self.lastTimestamp = timestamp
         if candidateStartedAt == nil {
             candidateStartedAt = timestamp
+            firstCenter = metrics.ballCenter
         }
         candidateMetrics.append(metrics)
+        if candidateMetrics.count > maximumBufferedSamples {
+            candidateMetrics.removeFirst(candidateMetrics.count - maximumBufferedSamples)
+        }
 
-        let meanRadius = candidateMetrics.map(\.radius).reduce(0, +) / Float(candidateMetrics.count)
-        let minimum = candidateMetrics.map(\.radius).min() ?? metrics.radius
-        let maximum = candidateMetrics.map(\.radius).max() ?? metrics.radius
-        let meanCenter = candidateMetrics.map(\.ballCenter).reduce(.zero, +) / Float(candidateMetrics.count)
-        let maximumCenterDrift = candidateMetrics
-            .map { simd_distance($0.ballCenter, meanCenter) }
-            .max() ?? 0
+        candidateSampleTotal += 1
+        radiusSum += metrics.radius
+        centerSum += metrics.ballCenter
+        tipToPalmSum += metrics.meanTipToPalmDistance
+        flexionSum += metrics.meanFingerFlexion
+        minimumRadius = min(minimumRadius, metrics.radius)
+        maximumRadius = max(maximumRadius, metrics.radius)
+        if let firstCenter {
+            maximumCenterDrift = max(
+                maximumCenterDrift,
+                simd_distance(firstCenter, metrics.ballCenter)
+            )
+        }
+
+        let sampleCount = Float(candidateSampleTotal)
+        let meanRadius = radiusSum / sampleCount
         guard meanRadius > .ulpOfOne,
-              (maximum - minimum) / meanRadius <= Self.maximumRadiusVariation,
+              (maximumRadius - minimumRadius) / meanRadius <= Self.maximumRadiusVariation,
               maximumCenterDrift / meanRadius <= Self.maximumCenterDriftFraction else {
             resetCandidate()
-            candidateStartedAt = timestamp
-            lastTimestamp = timestamp
-            candidateMetrics = [metrics]
+            startCandidate(with: metrics, at: timestamp)
             return nil
         }
         guard let candidateStartedAt,
@@ -165,12 +202,11 @@ struct SqueezeGraspGate: Sendable {
             return nil
         }
 
-        let count = Float(candidateMetrics.count)
         let averaged = SqueezeHandMetrics(
-            ballCenter: candidateMetrics.map(\.ballCenter).reduce(.zero, +) / count,
+            ballCenter: centerSum / sampleCount,
             radius: meanRadius,
-            meanTipToPalmDistance: candidateMetrics.map(\.meanTipToPalmDistance).reduce(0, +) / count,
-            meanFingerFlexion: candidateMetrics.map(\.meanFingerFlexion).reduce(0, +) / count
+            meanTipToPalmDistance: tipToPalmSum / sampleCount,
+            meanFingerFlexion: flexionSum / sampleCount
         )
         let accepted = SqueezeBaseline(metrics: averaged)
         baseline = accepted
@@ -181,6 +217,15 @@ struct SqueezeGraspGate: Sendable {
         candidateStartedAt = nil
         lastTimestamp = nil
         candidateMetrics.removeAll(keepingCapacity: true)
+        candidateSampleTotal = 0
+        radiusSum = 0
+        centerSum = .zero
+        tipToPalmSum = 0
+        flexionSum = 0
+        minimumRadius = .greatestFiniteMagnitude
+        maximumRadius = 0
+        firstCenter = nil
+        maximumCenterDrift = 0
     }
 
     mutating func resetForRecalibration() {
@@ -197,13 +242,32 @@ struct SqueezeGraspGate: Sendable {
         metrics.meanFingerFlexion.isFinite &&
         metrics.meanFingerFlexion >= minimumCuppedFlexion
     }
+
+    private mutating func startCandidate(
+        with metrics: SqueezeHandMetrics,
+        at timestamp: TimeInterval
+    ) {
+        candidateStartedAt = timestamp
+        lastTimestamp = timestamp
+        candidateMetrics = [metrics]
+        candidateSampleTotal = 1
+        radiusSum = metrics.radius
+        centerSum = metrics.ballCenter
+        tipToPalmSum = metrics.meanTipToPalmDistance
+        flexionSum = metrics.meanFingerFlexion
+        minimumRadius = metrics.radius
+        maximumRadius = metrics.radius
+        firstCenter = metrics.ballCenter
+        maximumCenterDrift = 0
+    }
 }
 
 struct SqueezeFacePose: Equatable, Sendable {
     let ballCenter: SIMD3<Float>
     let radius: Float
 
-    func surfacePosition(toward viewerPosition: SIMD3<Float>) -> SIMD3<Float> {
+    func surfacePosition(toward viewerPosition: SIMD3<Float>?) -> SIMD3<Float>? {
+        guard let viewerPosition else { return nil }
         let direction = viewerPosition - ballCenter
         guard simd_length(direction) > .ulpOfOne else { return ballCenter }
         return ballCenter + simd_normalize(direction) * radius

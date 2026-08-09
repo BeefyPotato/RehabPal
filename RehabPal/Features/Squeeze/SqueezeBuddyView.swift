@@ -72,7 +72,7 @@ struct SqueezeBuddyView: View {
                     progress: game.progress,
                     phase: game.phase,
                     statusLabel: game.statusLabel,
-                    faceVisible: game.facePose != nil,
+                    faceVisible: game.facePose != nil && coordinator.currentViewerPosition != nil,
                     pauseReason: coordinator.pauseReason,
                     isDemo: coordinator.isUsingDemoMode,
                     onDemoStep: performDemoStep
@@ -134,12 +134,12 @@ struct SqueezeBuddyView: View {
     }
 
     private func updateFace() {
-        guard let pose = game.facePose else {
+        guard let pose = game.facePose,
+              let viewerPosition = coordinator.currentViewerPosition,
+              let position = pose.surfacePosition(toward: viewerPosition) else {
             faceRoot.isEnabled = false
             return
         }
-        let viewerPosition = coordinator.currentViewerPosition ?? SIMD3<Float>(0, 1.4, 0)
-        let position = pose.surfacePosition(toward: viewerPosition)
         faceRoot.isEnabled = true
         faceRoot.look(at: viewerPosition, from: position, relativeTo: nil, forward: .positiveZ)
         let expression = max(0.6, 1 - game.normalizedClosure * 0.35)
@@ -151,9 +151,10 @@ struct SqueezeBuddyView: View {
     private func performDemoStep() {
         guard coordinator.isUsingDemoMode, !game.isComplete else { return }
         if game.facePose == nil {
-            handle(game.process(sample: demoSample(closure: 0, at: demoTimestamp)))
-            demoTimestamp += 1.05
-            handle(game.process(sample: demoSample(closure: 0, at: demoTimestamp)))
+            for _ in 0...10 {
+                handle(game.process(sample: demoSample(closure: 0, at: demoTimestamp)))
+                demoTimestamp += 0.1
+            }
             return
         }
         demoTimestamp += 0.1

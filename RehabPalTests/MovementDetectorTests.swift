@@ -51,55 +51,151 @@ final class MovementDetectorTests: XCTestCase {
         XCTAssertTrue(detector.update(closure: 0.2, at: 7.3, isTracked: true))
     }
 
+    // Break caught: dipping below the close threshold can retain the old hold start and count an invalid hold later.
+    func testSqueezeHoldResetsImmediatelyWhenClosureDropsBelowCloseThreshold() {
+        var detector = SqueezeRepDetector(
+            closeThreshold: 0.7,
+            reopenThreshold: 0.3,
+            holdSeconds: 1
+        )
+
+        XCTAssertFalse(detector.update(closure: 0.8, at: 0, isTracked: true))
+        XCTAssertEqual(detector.phase, .closing)
+        XCTAssertFalse(detector.update(closure: 0.5, at: 0.4, isTracked: true))
+        XCTAssertEqual(detector.phase, .open)
+        XCTAssertFalse(detector.update(closure: 0.8, at: 0.8, isTracked: true))
+        XCTAssertFalse(detector.update(closure: 0.8, at: 1.1, isTracked: true))
+        XCTAssertFalse(detector.update(closure: 0.2, at: 1.2, isTracked: true))
+        XCTAssertEqual(detector.completedRepetitions, 0)
+    }
+
     // Break caught: a single plausible hand frame can falsely authorize the face and repetition detector.
     func testSqueezeGraspGateRequiresOneStableSecondOfCuppedHandMetrics() throws {
-        var gate = SqueezeGraspGate(stabilityDuration: 1)
+        var gate = SqueezeGraspGate(
+            stabilityDuration: 1,
+            maximumInterSampleGap: 0.1,
+            maximumBufferedSamples: 64
+        )
         let metrics = squeezeMetrics(radius: 0.04)
 
         XCTAssertNil(gate.update(metrics, at: 0))
-        XCTAssertNil(gate.update(metrics, at: 0.99))
+        for step in 1..<10 {
+            XCTAssertNil(gate.update(metrics, at: Double(step) * 0.1))
+        }
         let baseline = try XCTUnwrap(gate.update(metrics, at: 1))
 
         XCTAssertEqual(baseline.ballCenter, SIMD3<Float>(0.1, 0.2, -0.4))
         XCTAssertEqual(baseline.radius, 0.04, accuracy: 0.0001)
     }
 
+    // Break caught: widely separated frames can masquerade as a continuously observed one-second grasp.
+    func testSqueezeGraspGateRestartsAfterInterSampleGap() {
+        var gate = SqueezeGraspGate(
+            stabilityDuration: 1,
+            maximumInterSampleGap: 0.1,
+            maximumBufferedSamples: 64
+        )
+        let metrics = squeezeMetrics(radius: 0.04)
+
+        XCTAssertNil(gate.update(metrics, at: 0))
+        XCTAssertNil(gate.update(metrics, at: 0.1))
+        XCTAssertNil(gate.update(metrics, at: 0.21))
+        for step in 1...9 {
+            XCTAssertNil(gate.update(metrics, at: 0.21 + Double(step) * 0.1))
+        }
+        XCTAssertNotNil(gate.update(metrics, at: 1.21))
+    }
+
+    // Break caught: repeated stale timestamps can accumulate samples without proving elapsed observation time.
+    func testSqueezeGraspGateRejectsRepeatedTimestampAndRequiresANewContinuousWindow() {
+        var gate = SqueezeGraspGate(
+            stabilityDuration: 1,
+            maximumInterSampleGap: 0.1,
+            maximumBufferedSamples: 64
+        )
+        let metrics = squeezeMetrics(radius: 0.04)
+
+        XCTAssertNil(gate.update(metrics, at: 0))
+        XCTAssertNil(gate.update(metrics, at: 0))
+        for step in 1...10 {
+            XCTAssertNil(gate.update(metrics, at: Double(step) * 0.1))
+        }
+        XCTAssertNotNil(gate.update(metrics, at: 1.1))
+    }
+
+    // Break caught: high-frequency input can grow the one-second candidate history without a hard bound.
+    func testSqueezeGraspGateBoundsBufferedSampleStorage() {
+        var gate = SqueezeGraspGate(
+            stabilityDuration: 1,
+            maximumInterSampleGap: 0.1,
+            maximumBufferedSamples: 64
+        )
+        let metrics = squeezeMetrics(radius: 0.04)
+
+        for step in 0..<500 {
+            XCTAssertNil(gate.update(metrics, at: Double(step) * 0.001))
+        }
+        XCTAssertLessThanOrEqual(gate.bufferedSampleCount, 64)
+    }
+
     // Break caught: implausibly small or large grasp envelopes can be mistaken for a real stress-ball pose.
     func testSqueezeGraspGateEnforcesInclusiveTwoPointFiveToSixPointFiveCentimeterRadius() {
         var lowerBound = SqueezeGraspGate(stabilityDuration: 1)
-        XCTAssertNil(lowerBound.update(squeezeMetrics(radius: 0.025), at: 0))
-        XCTAssertNotNil(lowerBound.update(squeezeMetrics(radius: 0.025), at: 1))
+        XCTAssertNotNil(continuousBaseline(
+            gate: &lowerBound,
+            metrics: squeezeMetrics(radius: 0.025)
+        ))
 
         var upperBound = SqueezeGraspGate(stabilityDuration: 1)
-        XCTAssertNil(upperBound.update(squeezeMetrics(radius: 0.065), at: 0))
-        XCTAssertNotNil(upperBound.update(squeezeMetrics(radius: 0.065), at: 1))
+        XCTAssertNotNil(continuousBaseline(
+            gate: &upperBound,
+            metrics: squeezeMetrics(radius: 0.065)
+        ))
 
         var tooSmall = SqueezeGraspGate(stabilityDuration: 1)
-        XCTAssertNil(tooSmall.update(squeezeMetrics(radius: 0.0249), at: 0))
-        XCTAssertNil(tooSmall.update(squeezeMetrics(radius: 0.0249), at: 1))
+        XCTAssertNil(continuousBaseline(
+            gate: &tooSmall,
+            metrics: squeezeMetrics(radius: 0.0249)
+        ))
 
         var tooLarge = SqueezeGraspGate(stabilityDuration: 1)
-        XCTAssertNil(tooLarge.update(squeezeMetrics(radius: 0.0651), at: 0))
-        XCTAssertNil(tooLarge.update(squeezeMetrics(radius: 0.0651), at: 1))
+        XCTAssertNil(continuousBaseline(
+            gate: &tooLarge,
+            metrics: squeezeMetrics(radius: 0.0651)
+        ))
     }
 
     // Break caught: a changing grasp envelope can pass merely because its first and last radii happen to match.
     func testSqueezeGraspGateRejectsMoreThanEighteenPercentRadiusVariationAcrossWindow() {
         var stable = SqueezeGraspGate(stabilityDuration: 1)
         XCTAssertNil(stable.update(squeezeMetrics(radius: 0.04), at: 0))
+        for step in 1...4 {
+            XCTAssertNil(stable.update(squeezeMetrics(radius: 0.04), at: Double(step) * 0.1))
+        }
         XCTAssertNil(stable.update(squeezeMetrics(radius: 0.047), at: 0.5))
+        for step in 6..<10 {
+            XCTAssertNil(stable.update(squeezeMetrics(radius: 0.04), at: Double(step) * 0.1))
+        }
         XCTAssertNotNil(stable.update(squeezeMetrics(radius: 0.04), at: 1))
 
         var unstable = SqueezeGraspGate(stabilityDuration: 1)
         XCTAssertNil(unstable.update(squeezeMetrics(radius: 0.04), at: 0))
+        for step in 1...4 {
+            XCTAssertNil(unstable.update(squeezeMetrics(radius: 0.04), at: Double(step) * 0.1))
+        }
         XCTAssertNil(unstable.update(squeezeMetrics(radius: 0.048), at: 0.5))
-        XCTAssertNil(unstable.update(squeezeMetrics(radius: 0.04), at: 1))
+        for step in 6...10 {
+            XCTAssertNil(unstable.update(squeezeMetrics(radius: 0.04), at: Double(step) * 0.1))
+        }
     }
 
     // Break caught: a translating hand can pass a radius-only gate and place the inferred face at a stale midpoint.
     func testSqueezeGraspGateRejectsSpatialDriftAcrossTheStabilityWindow() {
         var gate = SqueezeGraspGate(stabilityDuration: 1)
         XCTAssertNil(gate.update(squeezeMetrics(radius: 0.04), at: 0))
+        for step in 1..<10 {
+            XCTAssertNil(gate.update(squeezeMetrics(radius: 0.04), at: Double(step) * 0.1))
+        }
         XCTAssertNil(gate.update(
             squeezeMetrics(radius: 0.04, ballCenter: SIMD3<Float>(0.12, 0.2, -0.4)),
             at: 1
@@ -109,11 +205,20 @@ final class MovementDetectorTests: XCTestCase {
     // Break caught: facial features can float inside, behind, or away from the inferred physical-ball surface.
     func testSqueezeFacePositionIsOnTheInferredSurfaceTowardTheViewer() {
         let pose = SqueezeFacePose(ballCenter: SIMD3<Float>(1, 2, 3), radius: 0.04)
-        let position = pose.surfacePosition(toward: SIMD3<Float>(1, 2, 5))
+        guard let position = pose.surfacePosition(toward: SIMD3<Float>(1, 2, 5)) else {
+            return XCTFail("Expected a surface position with a current viewer pose")
+        }
 
         XCTAssertEqual(position.x, 1, accuracy: 0.0001)
         XCTAssertEqual(position.y, 2, accuracy: 0.0001)
         XCTAssertEqual(position.z, 3.04, accuracy: 0.0001)
+    }
+
+    // Break caught: a fixed fallback viewer position can leave a visible face when current device pose is unavailable.
+    func testSqueezeFaceHasNoSurfacePositionWithoutCurrentViewerPose() {
+        let pose = SqueezeFacePose(ballCenter: SIMD3<Float>(1, 2, 3), radius: 0.04)
+
+        XCTAssertNil(pose.surfacePosition(toward: nil))
     }
 
     // Break caught: closure derived from only distance or only flexion misrepresents the prescribed combined motion.
@@ -178,6 +283,17 @@ final class MovementDetectorTests: XCTestCase {
             joints[omittedJoint] = nil
         }
         return .synthetic(hand: .right, timestamp: 1, joints: joints)
+    }
+
+    private func continuousBaseline(
+        gate: inout SqueezeGraspGate,
+        metrics: SqueezeHandMetrics
+    ) -> SqueezeBaseline? {
+        var baseline: SqueezeBaseline?
+        for step in 0...10 {
+            baseline = gate.update(metrics, at: Double(step) * 0.1)
+        }
+        return baseline
     }
 
     private func squeezeMetrics(

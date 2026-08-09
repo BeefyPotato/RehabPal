@@ -97,7 +97,10 @@ final class RehabSessionCoordinator {
     }
 
     var currentViewerPosition: SIMD3<Float>? {
-        liveTracking.viewerPosition
+        if provenance == .demo {
+            return demoTracking?.viewerPosition
+        }
+        return liveTracking.viewerPosition
     }
 
     var compatibilityObservation: MovementObservation {
