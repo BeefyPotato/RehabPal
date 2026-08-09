@@ -16,6 +16,202 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertEqual(GameplayResult.fixture(for: .sheepDrop).exercise, .sheepDrop)
     }
 
+    // Break caught: adding Sheep Drop to the prescription without an explicit
+    // shared immersive route can leave an authorized request in the empty host.
+    func testSharedImmersiveRoutingSelectsEveryAuthorizedExperience() {
+        let routes = [
+            SharedRehabImmersiveRoute.resolve(request(for: .exercise(.balance))),
+            SharedRehabImmersiveRoute.resolve(request(for: .exercise(.squeeze))),
+            SharedRehabImmersiveRoute.resolve(request(for: .exercise(.sheepDrop))),
+            SharedRehabImmersiveRoute.resolve(request(for: .wristAssessment)),
+            SharedRehabImmersiveRoute.resolve(request(for: .handAssessment))
+        ]
+
+        XCTAssertEqual(
+            routes,
+            [.balance, .squeeze, .sheepDrop, .wristAssessment, .handAssessment]
+        )
+        XCTAssertEqual(SharedRehabImmersiveRoute.resolve(nil), .empty)
+    }
+
+    // Break caught: scene geometry or placement math can drift from the
+    // processor's pen-local floor-at-zero contract.
+    func testSheepDropSceneUsesReferenceGeometryAndPenLocalCoordinates() throws {
+        XCTAssertEqual(SheepDropSceneConfiguration.gravity, [0, -6, 0])
+        XCTAssertEqual(SheepDropSceneConfiguration.tableSize, [1, 0.015, 0.7])
+        XCTAssertEqual(SheepDropSceneConfiguration.penSide, 0.36)
+        XCTAssertEqual(SheepDropSceneConfiguration.fenceHeight, 0.07)
+        XCTAssertEqual(SheepDropSceneConfiguration.fenceThickness, 0.012)
+        XCTAssertEqual(SheepDropSceneConfiguration.spawnPadSide, 0.26)
+        XCTAssertEqual(SheepDropSceneConfiguration.spawnPadGap, 0.025)
+        XCTAssertEqual(SheepDropSceneConfiguration.spawnPosition.x, 0.335, accuracy: 0.000_001)
+        XCTAssertEqual(SheepDropSceneConfiguration.floorY, 0)
+
+        var placement = simd_float4x4(
+            simd_quatf(angle: .pi / 2, axis: [0, 1, 0])
+        )
+        placement.columns.3 = SIMD4<Float>(0.4, 0.73, -0.6, 1)
+        let coordinates = try XCTUnwrap(
+            SheepDropCoordinateSpace(tableTransform: placement)
+        )
+        let expectedWorld = SIMD3<Float>(0.4, 0.785, -0.935)
+
+        XCTAssertEqual(
+            coordinates.worldPosition(fromPenLocal: [0.335, 0.055, 0]).x,
+            expectedWorld.x,
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(
+            coordinates.worldPosition(fromPenLocal: [0.335, 0.055, 0]).y,
+            expectedWorld.y,
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(
+            coordinates.worldPosition(fromPenLocal: [0.335, 0.055, 0]).z,
+            expectedWorld.z,
+            accuracy: 0.000_001
+        )
+        let local = coordinates.penLocalPosition(fromWorld: expectedWorld)
+        XCTAssertEqual(local.x, 0.335, accuracy: 0.000_001)
+        XCTAssertEqual(local.y, 0.055, accuracy: 0.000_001)
+        XCTAssertEqual(local.z, 0, accuracy: 0.000_001)
+        let localVelocity = coordinates.penLocalVelocity(fromWorld: [0.2, -0.1, 0])
+        XCTAssertEqual(localVelocity.x, 0, accuracy: 0.000_001)
+        XCTAssertEqual(localVelocity.y, -0.1, accuracy: 0.000_001)
+        XCTAssertEqual(localVelocity.z, 0.2, accuracy: 0.000_001)
+    }
+
+    // Break caught: accepting later plane updates after pickup can move the
+    // physical pen while a kinematic sheep is already in the user's hand.
+    func testSheepDropPlacementLocksAtFirstPickup() {
+        let first = TablePlacement(
+            transform: simd_float4x4(translation: [0, 0.73, -0.55]),
+            source: .estimated
+        )
+        let later = TablePlacement(
+            transform: simd_float4x4(translation: [0.2, 0.8, -0.4]),
+            source: .detected
+        )
+        var state = SheepDropPlacementState()
+
+        state.receive(first)
+        state.lockAtFirstPickup()
+        state.receive(later)
+
+        XCTAssertEqual(state.placement, first)
+        XCTAssertTrue(state.isLocked)
+    }
+
+    // Break caught: generic phase copy can hide tracking provenance, table
+    // estimation, or the explicit five-finger release instruction.
+    func testSheepDropHUDUsesApprovedCopyAndDisclosure() {
+        XCTAssertEqual(
+            SheepDropHUDPresentation(
+                phase: .findingTable,
+                pauseReason: nil,
+                provenance: .live,
+                tableSource: nil,
+                isOverPen: false
+            ).instruction,
+            "Finding a table…"
+        )
+        let live = SheepDropHUDPresentation(
+            phase: .carrying,
+            pauseReason: nil,
+            provenance: .live,
+            tableSource: .detected,
+            isOverPen: true
+        )
+        XCTAssertEqual(live.provenanceLabel, "LIVE HAND TRACKING")
+        XCTAssertEqual(live.tableLabel, "TABLE DETECTED")
+        XCTAssertEqual(live.instruction, "Spread your fingers to release.")
+
+        let demo = SheepDropHUDPresentation(
+            phase: .paused,
+            pauseReason: .trackingLost(requiresRecalibration: true),
+            provenance: .demo,
+            tableSource: .estimated,
+            isOverPen: false
+        )
+        XCTAssertEqual(demo.provenanceLabel, "DEMO FALLBACK — SIMULATED")
+        XCTAssertEqual(demo.tableLabel, "TABLE ESTIMATED")
+        XCTAssertEqual(demo.instruction, "Recalibration required.")
+    }
+
+    // Break caught: a Demo button can bypass the grasp/release processor and
+    // increment progress directly instead of publishing five-fingertip frames.
+    func testSheepDropDemoFramesPassThroughTheRealProcessorWithoutDirectScoring() throws {
+        let spawn = SheepDropSceneConfiguration.spawnPosition
+        let source = SyntheticMovementSource(hand: .right)
+        var session = SheepDropSession(
+            affectedHand: .right,
+            goal: 1,
+            isSimulated: true,
+            spawnPosition: spawn,
+            sheepCollisionRadius: SheepDropSceneConfiguration.sheepCollisionRadius
+        )
+        let resting = SheepDropObservation(
+            position: spawn,
+            velocity: .zero,
+            isRestingOnSpawnSurface: true,
+            isOutsideSafeVolume: false
+        )
+
+        source.setSheepDropPose(.clustered, centeredAt: spawn, at: 0)
+        XCTAssertEqual(
+            session.process(frame: source.latestJointFrame, observation: resting, at: 0).event,
+            .formingGrasp
+        )
+        source.setSheepDropPose(.clustered, centeredAt: spawn, at: 0.25)
+        XCTAssertEqual(
+            session.process(frame: source.latestJointFrame, observation: resting, at: 0.25).event,
+            .pickupBegan
+        )
+
+        let overPen = SIMD3<Float>(0, 0.2, 0)
+        source.setSheepDropPose(.clustered, centeredAt: overPen, at: 0.5)
+        XCTAssertEqual(
+            session.process(
+                frame: source.latestJointFrame,
+                observation: SheepDropObservation(
+                    position: spawn,
+                    velocity: .zero,
+                    isRestingOnSpawnSurface: false,
+                    isOutsideSafeVolume: false
+                ),
+                at: 0.5
+            ).event,
+            .carrying
+        )
+        source.setSheepDropPose(.open, centeredAt: overPen, at: 0.6)
+        _ = session.process(
+            frame: source.latestJointFrame,
+            observation: SheepDropObservation(
+                position: overPen,
+                velocity: .zero,
+                isRestingOnSpawnSurface: false,
+                isOutsideSafeVolume: false
+            ),
+            at: 0.6
+        )
+        source.setSheepDropPose(.open, centeredAt: overPen, at: 0.75)
+        XCTAssertEqual(
+            session.process(
+                frame: source.latestJointFrame,
+                observation: SheepDropObservation(
+                    position: overPen,
+                    velocity: .zero,
+                    isRestingOnSpawnSurface: false,
+                    isOutsideSafeVolume: false
+                ),
+                at: 0.75
+            ).event,
+            .released
+        )
+        XCTAssertEqual(session.completedDrops, 0)
+        XCTAssertNil(session.result)
+    }
+
     // Break caught: hard-coding the prototype's old eight targets ignores the clinician prescription.
     func testBalanceUsesThePrescriptionTenTargetGoal() {
         let session = BalanceSession(prescription: .demo, seed: 42)
@@ -405,5 +601,9 @@ final class ExerciseSessionTests: XCTestCase {
         }
         if omittedJoint == .wrist { joints[.wrist] = nil }
         return .synthetic(hand: hand, timestamp: 1, joints: joints)
+    }
+
+    private func request(for experience: RehabExperience) -> RehabSessionRequest {
+        RehabSessionRequest(experience: experience, prescription: .demo)
     }
 }

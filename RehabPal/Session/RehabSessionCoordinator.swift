@@ -296,6 +296,9 @@ final class RehabSessionCoordinator {
             request: failure.request
         )
         let source = SyntheticMovementSource(hand: prescription.affectedHand)
+        if failure.request.experience == .exercise(.sheepDrop) {
+            source.setSheepDropPose(.open, centeredAt: [0, 0.12, 0], at: 0)
+        }
         demoTracking = source
         latestAcceptedJointFrame = source.latestJointFrame
         latestFrameReceivedAt = source.latestJointFrame?.timestamp
@@ -445,7 +448,8 @@ final class RehabSessionCoordinator {
               let frame = latestAcceptedJointFrame,
               frame.timestamp == frameTimestamp,
               let receivedAt = latestFrameReceivedAt,
-              isUsable(frame, for: request, receivedAt: receivedAt) else {
+              isUsable(frame, for: request, receivedAt: receivedAt),
+              isCalibrationFrame(frame, for: request) else {
             return false
         }
         calibratedProcessorGeneration = generation
@@ -623,11 +627,24 @@ final class RehabSessionCoordinator {
         switch experience {
         case .exercise(.balance), .wristAssessment:
             WristNeutralCalibration.requiredJoints
-        case .exercise(.squeeze), .exercise(.sheepDrop):
+        case .exercise(.squeeze):
             SqueezeHandMetrics.requiredJoints
+        case .exercise(.sheepDrop):
+            SheepDropSession.requiredJoints
         case .handAssessment:
             Set(FingerROMMetrics.requiredJoints(for: .thumb))
         }
+    }
+
+    private func isCalibrationFrame(
+        _ frame: HandJointFrame,
+        for request: RehabSessionRequest
+    ) -> Bool {
+        guard request.experience == .exercise(.sheepDrop) else { return true }
+        guard let pose = FiveFingertipPose(frame: frame, sheepPosition: .zero) else {
+            return false
+        }
+        return pose.clusterRatio >= SheepDropSession.releaseClusterRatio
     }
 
     private func isCurrent(_ token: RehabLiveStartToken) -> Bool {

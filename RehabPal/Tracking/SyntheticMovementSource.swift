@@ -2,6 +2,11 @@ import Foundation
 import Observation
 import simd
 
+enum SyntheticSheepDropPose: Equatable, Sendable {
+    case open
+    case clustered
+}
+
 @MainActor
 @Observable
 final class SyntheticMovementSource: MovementObservationSource {
@@ -71,6 +76,32 @@ final class SyntheticMovementSource: MovementObservationSource {
         publishJointFrame()
     }
 
+    /// Publishes a complete, hand-scale-valid five-fingertip frame in the
+    /// caller's coordinate space. Sheep Drop supplies pen-local centers so its
+    /// Demo Mode crosses the same processor boundary as live hand frames.
+    func setSheepDropPose(
+        _ pose: SyntheticSheepDropPose,
+        centeredAt center: SIMD3<Float>,
+        at timestamp: TimeInterval
+    ) {
+        let closure: Float = pose == .clustered ? 1 : 0
+        latestObservation = MovementObservation(
+            timestamp: timestamp,
+            isTracked: true,
+            wristPitch: 0,
+            wristRoll: 0,
+            closure: closure,
+            thumbToIndexDistance: pose == .clustered ? 0.005 : 0.025,
+            quality: .good
+        )
+        latestJointFrame = Self.sheepDropJointFrame(
+            hand: hand,
+            timestamp: timestamp,
+            pose: pose,
+            center: center
+        )
+    }
+
     private func publishJointFrame() {
         latestJointFrame = Self.jointFrame(
             hand: hand,
@@ -106,5 +137,42 @@ final class SyntheticMovementSource: MovementObservationSource {
             joint: simd_float4x4(translation: SIMD3<Float>(tipDistance / 2, 0, 0))
         ))
         return .synthetic(hand: hand, timestamp: timestamp, joints: joints)
+    }
+
+    private static func sheepDropJointFrame(
+        hand: AffectedHand,
+        timestamp: TimeInterval,
+        pose: SyntheticSheepDropPose,
+        center: SIMD3<Float>
+    ) -> HandJointFrame {
+        var joints: [HandJoint: HandJointSample] = [
+            .wrist: tracked(at: center + [0, -0.08, 0]),
+            .indexFingerKnuckle: tracked(at: center + [-0.03, -0.02, 0]),
+            .middleFingerKnuckle: tracked(at: center + [-0.01, -0.02, 0]),
+            .ringFingerKnuckle: tracked(at: center + [0.01, -0.02, 0]),
+            .littleFingerKnuckle: tracked(at: center + [0.03, -0.02, 0])
+        ]
+        let tipOffsets: [Float]
+        switch pose {
+        case .open:
+            tipOffsets = [-0.05, -0.025, 0, 0.025, 0.05]
+        case .clustered:
+            tipOffsets = [-0.01, -0.005, 0, 0.005, 0.01]
+        }
+        let tips: [HandJoint] = [
+            .thumbTip,
+            .indexFingerTip,
+            .middleFingerTip,
+            .ringFingerTip,
+            .littleFingerTip
+        ]
+        for (joint, offset) in zip(tips, tipOffsets) {
+            joints[joint] = tracked(at: center + [offset, 0, 0])
+        }
+        return .synthetic(hand: hand, timestamp: timestamp, joints: joints)
+    }
+
+    private static func tracked(at position: SIMD3<Float>) -> HandJointSample {
+        .tracked(transform: simd_float4x4(translation: position))
     }
 }

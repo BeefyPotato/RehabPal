@@ -130,6 +130,127 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             coordinator.currentTablePlacement?.transform.translation,
             [0, 0.73, -0.55]
         )
+        let frame = coordinator.currentFrame
+        XCTAssertEqual(frame?.confidence(requiring: SheepDropSession.requiredJoints), .good)
+        XCTAssertGreaterThanOrEqual(
+            FiveFingertipPose(frame: try! XCTUnwrap(frame), sheepPosition: .zero)?.clusterRatio ?? 0,
+            SheepDropSession.releaseClusterRatio
+        )
+    }
+
+    // Break caught: registering Squeeze's joint set for Sheep Drop rejects a
+    // complete Sheep frame before the view can publish its processor contract.
+    @MainActor
+    func testSheepDropRegistersItsExactRequiredJointsBeforeFirstPoll() async {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource()
+        )
+        let request = RehabSessionRequest(
+            experience: .exercise(.sheepDrop),
+            prescription: .demo
+        )
+        await coordinator.startLiveForTesting(request)
+
+        let usable = sheepDropFrame(hand: .right, at: 1, pose: .open)
+        coordinator.receiveJointFrame(usable, at: 1)
+
+        XCTAssertNil(coordinator.pauseReason)
+        XCTAssertEqual(coordinator.currentFrame?.timestamp, 1)
+
+        var missingTipJoints = sheepDropFrame(
+            hand: .right,
+            at: 1.1,
+            pose: .open
+        ).joints
+        missingTipJoints[.littleFingerTip] = .untracked
+        coordinator.receiveJointFrame(
+            .synthetic(hand: .right, timestamp: 1.1, joints: missingTipJoints),
+            at: 1.1
+        )
+
+        XCTAssertEqual(
+            coordinator.pauseReason,
+            .trackingLost(requiresRecalibration: false)
+        )
+    }
+
+    // Break caught: a long-loss reset can be acknowledged with a closed grasp
+    // or a stale/wrong generation, immediately resuming into another pickup.
+    @MainActor
+    func testSheepDropCalibrationRequiresCurrentGenerationAndOpenFiveFingertipFrame() async {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource()
+        )
+        let request = RehabSessionRequest(
+            experience: .exercise(.sheepDrop),
+            prescription: .demo
+        )
+        await coordinator.startLiveForTesting(request)
+        coordinator.receiveJointFrame(
+            sheepDropFrame(hand: .right, at: 1, pose: .open),
+            at: 1
+        )
+        coordinator.receiveJointFrame(nil, at: 2)
+        coordinator.receiveJointFrame(
+            sheepDropFrame(hand: .right, at: 4.1, pose: .clustered),
+            at: 4.1
+        )
+
+        let generation = try! XCTUnwrap(coordinator.pendingProcessorResetGeneration)
+        XCTAssertFalse(coordinator.acknowledgeProcessorReset(generation + 1))
+        XCTAssertTrue(coordinator.acknowledgeProcessorReset(generation))
+        XCTAssertFalse(coordinator.acknowledgeProcessorReset(generation))
+        XCTAssertFalse(coordinator.acknowledgeProcessorCalibration(
+            generation: generation,
+            frameTimestamp: 4.1
+        ))
+        XCTAssertFalse(coordinator.canConfirmRecalibration)
+
+        coordinator.receiveJointFrame(
+            sheepDropFrame(hand: .right, at: 4.2, pose: .open),
+            at: 4.2
+        )
+        XCTAssertTrue(coordinator.acknowledgeProcessorCalibration(
+            generation: generation,
+            frameTimestamp: 4.2
+        ))
+        XCTAssertTrue(coordinator.canConfirmRecalibration)
+        XCTAssertTrue(coordinator.confirmRecalibration())
+    }
+
+    // Break caught: the Sheep Drop route can finish with another exercise's
+    // gameplay result when both doses happen to match.
+    @MainActor
+    func testSheepDropCompletionAcceptsOnlyMatchingGameplayResult() async {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource()
+        )
+        let request = RehabSessionRequest(
+            experience: .exercise(.sheepDrop),
+            prescription: .demo
+        )
+        await coordinator.startLiveForTesting(request)
+        coordinator.accept(SessionProgress(completed: 5, goal: 5, partial: 0))
+
+        XCTAssertNil(coordinator.finish(with: .gameplay(GameplayResult(
+            exercise: .squeeze,
+            prescribedDose: 5,
+            completedDose: 5,
+            trackingNote: "wrong route"
+        ))))
+        let sheepResult = GameplayResult(
+            exercise: .sheepDrop,
+            prescribedDose: 5,
+            completedDose: 5,
+            trackingNote: "five-fingertip joint observations"
+        )
+        XCTAssertEqual(
+            coordinator.finish(with: .gameplay(sheepResult))?.payload,
+            .gameplay(sheepResult)
+        )
     }
 
     @MainActor
@@ -779,6 +900,56 @@ final class RehabSessionCoordinatorTests: XCTestCase {
                 ($0, HandJointSample.tracked(transform: matrix_identity_float4x4))
             })
         )
+    }
+
+    private enum SheepDropTestPose {
+        case open
+        case clustered
+    }
+
+    private func sheepDropFrame(
+        hand: AffectedHand,
+        at timestamp: TimeInterval,
+        pose: SheepDropTestPose
+    ) -> HandJointFrame {
+        let center = SIMD3<Float>(0.335, 0.12, 0)
+        var joints: [HandJoint: HandJointSample] = [
+            .wrist: .tracked(transform: simd_float4x4(
+                translation: center + SIMD3<Float>(0, -0.08, 0)
+            )),
+            .indexFingerKnuckle: .tracked(transform: simd_float4x4(
+                translation: center + SIMD3<Float>(-0.03, -0.02, 0)
+            )),
+            .middleFingerKnuckle: .tracked(transform: simd_float4x4(
+                translation: center + SIMD3<Float>(-0.01, -0.02, 0)
+            )),
+            .ringFingerKnuckle: .tracked(transform: simd_float4x4(
+                translation: center + SIMD3<Float>(0.01, -0.02, 0)
+            )),
+            .littleFingerKnuckle: .tracked(transform: simd_float4x4(
+                translation: center + SIMD3<Float>(0.03, -0.02, 0)
+            ))
+        ]
+        let tipOffsets: [Float]
+        switch pose {
+        case .open:
+            tipOffsets = [-0.05, -0.025, 0, 0.025, 0.05]
+        case .clustered:
+            tipOffsets = [-0.01, -0.005, 0, 0.005, 0.01]
+        }
+        let tips: [HandJoint] = [
+            .thumbTip,
+            .indexFingerTip,
+            .middleFingerTip,
+            .ringFingerTip,
+            .littleFingerTip
+        ]
+        for (joint, offset) in zip(tips, tipOffsets) {
+            joints[joint] = .tracked(transform: simd_float4x4(
+                translation: center + SIMD3<Float>(offset, 0, 0)
+            ))
+        }
+        return .synthetic(hand: hand, timestamp: timestamp, joints: joints)
     }
 }
 
