@@ -17,6 +17,9 @@ struct PetRewardView: View {
             .frame(width: 320, height: 300)
             Text("Your Recovery Pet earned a treat")
                 .font(.largeTitle.bold())
+            Text("Feeding this treat restores 20% fullness.")
+                .font(.title3)
+                .foregroundStyle(.secondary)
             Button("Feed treat") { _ = state.feedPet() }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.extraLarge)
