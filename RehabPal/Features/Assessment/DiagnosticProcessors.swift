@@ -33,6 +33,7 @@ struct WristDiagnosticProcessor: Sendable {
     let targetSequence: [WristAssessmentTarget]
     let isSimulated: Bool
     let maximumInterFrameGap: TimeInterval
+    let configuration: WristDiagnosticPrescription
 
     private(set) var completedAttempts = 0
     private(set) var result: AssessmentResult.WristResult?
@@ -54,12 +55,21 @@ struct WristDiagnosticProcessor: Sendable {
         affectedHand: AffectedHand,
         attemptsPerTarget: Int,
         isSimulated: Bool = false,
-        maximumInterFrameGap: TimeInterval = 0.1
+        maximumInterFrameGap: TimeInterval = 0.1,
+        configuration: WristDiagnosticPrescription? = nil
     ) {
         self.affectedHand = affectedHand
         self.isSimulated = isSimulated
         self.maximumInterFrameGap = max(0.001, maximumInterFrameGap)
         let attempts = max(1, attemptsPerTarget)
+        self.configuration = configuration ?? WristDiagnosticPrescription(
+            attemptsPerDirection: attempts,
+            targetDegrees: Self.targetDegrees,
+            targetToleranceDegrees: Self.targetToleranceDegrees,
+            offAxisToleranceDegrees: Self.offAxisToleranceDegrees,
+            holdSeconds: Self.holdSeconds,
+            neutralReturnToleranceDegrees: Self.neutralReturnToleranceDegrees
+        )
         targetSequence = WristAssessmentTarget.allCases.flatMap { target in
             Array(repeating: target, count: attempts)
         }
@@ -77,7 +87,7 @@ struct WristDiagnosticProcessor: Sendable {
     var progress: SessionProgress {
         let partial: Double
         if let holdStartedAt, let lastFrameTimestamp, !isReturningToNeutral {
-            partial = min(max((lastFrameTimestamp - holdStartedAt) / Self.holdSeconds, 0), 1)
+            partial = min(max((lastFrameTimestamp - holdStartedAt) / configuration.holdSeconds, 0), 1)
         } else {
             partial = isReturningToNeutral ? 1 : 0
         }
@@ -169,7 +179,7 @@ struct WristDiagnosticProcessor: Sendable {
         }
 
         if isReturningToNeutral {
-            guard Self.isNeutral(pitchDegrees: pitchDegrees, rollDegrees: rollDegrees) else {
+            guard isNeutral(pitchDegrees: pitchDegrees, rollDegrees: rollDegrees) else {
                 return .returnToNeutral(target: target, attempt: completedAttempts + 1, goal: targetSequence.count)
             }
             finishAttempt()
@@ -183,7 +193,7 @@ struct WristDiagnosticProcessor: Sendable {
             )
         }
 
-        guard let sample = Self.targetSample(
+        guard let sample = targetSample(
             target: target,
             pitchDegrees: pitchDegrees,
             rollDegrees: rollDegrees
@@ -198,7 +208,7 @@ struct WristDiagnosticProcessor: Sendable {
         holdPrimarySamplesDegrees.append(sample.primaryDegrees)
         holdTargetErrorsDegrees.append(sample.targetErrorDegrees)
         let elapsed = max(0, frame.timestamp - (holdStartedAt ?? frame.timestamp))
-        guard elapsed + 0.000_001 >= Self.holdSeconds else {
+        guard elapsed + 0.000_001 >= configuration.holdSeconds else {
             return .holding(
                 target: target,
                 elapsed: elapsed,
@@ -283,7 +293,7 @@ struct WristDiagnosticProcessor: Sendable {
         return .ready(target: target, attempt: completedAttempts + 1, goal: targetSequence.count)
     }
 
-    private static func targetSample(
+    private func targetSample(
         target: WristAssessmentTarget,
         pitchDegrees: Float,
         rollDegrees: Float
@@ -300,27 +310,27 @@ struct WristDiagnosticProcessor: Sendable {
         case .forward:
             primary = pitchDegrees
             offAxis = rollDegrees
-            targetValue = targetDegrees
+            targetValue = configuration.targetDegrees
         case .backward:
             primary = pitchDegrees
             offAxis = rollDegrees
-            targetValue = -targetDegrees
+            targetValue = -configuration.targetDegrees
         case .left:
             primary = rollDegrees
             offAxis = pitchDegrees
-            targetValue = -targetDegrees
+            targetValue = -configuration.targetDegrees
         case .right:
             primary = rollDegrees
             offAxis = pitchDegrees
-            targetValue = targetDegrees
+            targetValue = configuration.targetDegrees
         }
-        guard abs(primary - targetValue) <= targetToleranceDegrees,
-              abs(offAxis) <= offAxisToleranceDegrees else {
+        guard abs(primary - targetValue) <= configuration.targetToleranceDegrees,
+              abs(offAxis) <= configuration.offAxisToleranceDegrees else {
             return nil
         }
         return (
             primary,
-            targetErrorDegrees(
+            Self.targetErrorDegrees(
                 primaryDegrees: primary,
                 targetDegrees: targetValue,
                 offAxisDegrees: offAxis
@@ -328,9 +338,9 @@ struct WristDiagnosticProcessor: Sendable {
         )
     }
 
-    private static func isNeutral(pitchDegrees: Float, rollDegrees: Float) -> Bool {
-        abs(pitchDegrees) <= neutralReturnToleranceDegrees &&
-        abs(rollDegrees) <= neutralReturnToleranceDegrees
+    private func isNeutral(pitchDegrees: Float, rollDegrees: Float) -> Bool {
+        abs(pitchDegrees) <= configuration.neutralReturnToleranceDegrees &&
+        abs(rollDegrees) <= configuration.neutralReturnToleranceDegrees
     }
 
     private static func mean(_ values: [Float]) -> Float {
@@ -467,6 +477,7 @@ struct FingerROMDiagnosticProcessor: Sendable {
     let digitSequence: [HandDigit]
     let isSimulated: Bool
     let maximumInterFrameGap: TimeInterval
+    let configuration: FingerDiagnosticPrescription
 
     private(set) var completedAttempts = 0
     private(set) var result: [HandDigit: DigitROMSummary]?
@@ -491,12 +502,22 @@ struct FingerROMDiagnosticProcessor: Sendable {
         affectedHand: AffectedHand,
         attemptsPerDigit: Int = 2,
         isSimulated: Bool = false,
-        maximumInterFrameGap: TimeInterval = 0.1
+        maximumInterFrameGap: TimeInterval = 0.1,
+        configuration: FingerDiagnosticPrescription? = nil
     ) {
         self.affectedHand = affectedHand
         self.isSimulated = isSimulated
         self.maximumInterFrameGap = max(0.001, maximumInterFrameGap)
         let attempts = max(1, attemptsPerDigit)
+        self.configuration = configuration ?? FingerDiagnosticPrescription(
+            attemptsPerDigit: attempts,
+            extensionStabilitySeconds: Self.extensionStabilitySeconds,
+            extensionStabilityToleranceDegrees: Self.extensionStabilityToleranceDegrees,
+            minimumTotalExcursionDegrees: Self.minimumTotalExcursionDegrees,
+            extensionReturnToleranceDegrees: Self.extensionReturnToleranceDegrees,
+            thumbOppositionReduction: Self.thumbOppositionReduction,
+            thumbOppositionReturnTolerance: Self.thumbOppositionReturnTolerance
+        )
         digitSequence = HandDigit.allCases.flatMap { digit in
             Array(repeating: digit, count: attempts)
         }
@@ -516,7 +537,7 @@ struct FingerROMDiagnosticProcessor: Sendable {
             partial = 1
         } else if let extensionBaseline, let maximumFlexion {
             let excursion = simd.max(maximumFlexion - extensionBaseline, SIMD3<Float>.zero)
-            partial = min(max(Double(excursion.x + excursion.y + excursion.z) / Double(Self.minimumTotalExcursionDegrees), 0), 1)
+            partial = min(max(Double(excursion.x + excursion.y + excursion.z) / Double(configuration.minimumTotalExcursionDegrees), 0), 1)
         } else {
             partial = 0
         }
@@ -625,7 +646,7 @@ struct FingerROMDiagnosticProcessor: Sendable {
             }
             if let extensionCandidate {
                 let difference = simd_abs(flexion - extensionCandidate)
-                if difference.max() > Self.extensionStabilityToleranceDegrees {
+                if difference.max() > configuration.extensionStabilityToleranceDegrees {
                     self.extensionCandidate = flexion
                     extensionStartedAt = sample.timestamp
                     return .stabilizingExtension(digit: digit, attempt: completedAttempts + 1, goal: digitSequence.count)
@@ -635,7 +656,7 @@ struct FingerROMDiagnosticProcessor: Sendable {
                 extensionStartedAt = sample.timestamp
             }
             guard let extensionStartedAt,
-                  sample.timestamp - extensionStartedAt + 0.000_001 >= Self.extensionStabilitySeconds else {
+                  sample.timestamp - extensionStartedAt + 0.000_001 >= configuration.extensionStabilitySeconds else {
                 return .stabilizingExtension(digit: digit, attempt: completedAttempts + 1, goal: digitSequence.count)
             }
             extensionBaseline = flexion
@@ -650,11 +671,11 @@ struct FingerROMDiagnosticProcessor: Sendable {
         let positiveExcursion = simd.max((maximumFlexion ?? flexion) - baseline, SIMD3<Float>.zero)
         let totalExcursion = positiveExcursion.x + positiveExcursion.y + positiveExcursion.z
         if !reachedExcursion {
-            let sufficientFlexion = totalExcursion >= Self.minimumTotalExcursionDegrees
+            let sufficientFlexion = totalExcursion >= configuration.minimumTotalExcursionDegrees
             let sufficientOpposition: Bool
             if digit == .thumb, let oppositionBaseline {
                 sufficientOpposition = sample.metrics.oppositionDistance.map {
-                    $0 <= oppositionBaseline * (1 - Self.thumbOppositionReduction)
+                    $0 <= oppositionBaseline * (1 - configuration.thumbOppositionReduction)
                 } ?? false
             } else {
                 sufficientOpposition = true
@@ -667,11 +688,11 @@ struct FingerROMDiagnosticProcessor: Sendable {
         }
 
         let returnDifference = simd_abs(flexion - baseline)
-        let returnedFlexion = returnDifference.max() <= Self.extensionReturnToleranceDegrees
+        let returnedFlexion = returnDifference.max() <= configuration.extensionReturnToleranceDegrees
         let returnedOpposition: Bool
         if digit == .thumb, let oppositionBaseline {
             returnedOpposition = sample.metrics.oppositionDistance.map {
-                abs($0 - oppositionBaseline) <= oppositionBaseline * Self.thumbOppositionReturnTolerance
+                abs($0 - oppositionBaseline) <= oppositionBaseline * configuration.thumbOppositionReturnTolerance
             } ?? false
         } else {
             returnedOpposition = true

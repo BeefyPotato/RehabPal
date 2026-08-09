@@ -7,25 +7,49 @@ struct AfterCareReportView: View {
     @State private var metric: Metric = .wrist
     @State private var digit: HandDigit = .index
 
-    private var report: AfterCareReport {
-        AfterCareReport.make(history: state.history, assessment: state.assessmentResult ?? .fixture, gameplay: Array(state.exerciseResults.values), symptoms: state.symptomResult ?? .comfortable, reviewThreshold: state.prescription.symptomReviewThreshold)
+    private var report: AfterCareReport? {
+        guard let assessment = state.assessmentResult,
+              let symptoms = state.symptomResult else {
+            return nil
+        }
+        return AfterCareReport.make(
+            history: state.history,
+            assessment: assessment,
+            gameplay: Array(state.exerciseResults.values),
+            symptoms: symptoms,
+            reviewThreshold: state.prescription.symptomReviewThreshold,
+            sessionProvenance: Dictionary(uniqueKeysWithValues: state.sessionOutcomes.map {
+                ($0.key, $0.value.provenance)
+            })
+        )
     }
 
     private var chartPoints: [(Date, Double, Bool)] {
         var points = state.history.romSessions.map { session in
             (session.date, metric == .wrist ? Double(session.wristScore) : session.digitExcursions[digit, default: 0], false)
         }
-        let today = metric == .wrist
-            ? Double(state.assessmentResult?.wristControlScore ?? AssessmentResult.fixture.wristControlScore)
-            : state.assessmentResult?.handROM[digit]?.totalExcursion ?? AssessmentResult.fixture.handROM[digit]!.totalExcursion
-        points.append((.now, today, true))
+        if let assessment = state.assessmentResult {
+            let today = metric == .wrist
+                ? Double(assessment.wristControlScore)
+                : assessment.handROM[digit]?.totalExcursion
+            if let today {
+                points.append((.now, today, true))
+            }
+        }
         return points
     }
 
     var body: some View {
-        ScrollView {
+        if let report {
+            ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Today’s progress").font(.largeTitle.bold())
+                if let simulationNote = report.simulationNote {
+                    Label(simulationNote, systemImage: "testtube.2")
+                        .font(.headline)
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel(simulationNote)
+                }
                 Picker("Metric", selection: $metric) {
                     ForEach(Metric.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }.pickerStyle(.segmented)
@@ -52,13 +76,18 @@ struct AfterCareReportView: View {
                         metricRow("Baseline", report.assessment.baselineWristControl)
                         metricRow("Previous", report.assessment.previousWristControl)
                         metricRow("Today", report.assessment.currentWristControl)
-                    } else if let summary = state.assessmentResult?.handROM[digit] ?? AssessmentResult.fixture.handROM[digit] {
+                    } else if let summary = state.assessmentResult?.handROM[digit] {
                         metricRow("Total joint excursion", summary.isAvailable ? Int(summary.totalExcursion) : nil, suffix: "°")
                         metricRow("Consistency", summary.isAvailable ? Int(summary.consistency) : nil, suffix: "%")
                     }
                     Text(report.assessment.trackingNote).foregroundStyle(.secondary)
                 }
-                reportCard("Exercises") { Text("\(report.gameplay.completedExercises)/2 completed at the prescribed dose") }
+                reportCard("Exercises") {
+                    Text("\(report.gameplay.completedExercises)/\(ExerciseKind.allCases.count) completed at the prescribed dose")
+                    ForEach(report.gameplay.trackingNotes, id: \.self) { note in
+                        Text(note).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 reportCard("Your check-in") {
                     Text("Discomfort \(report.patientReported.discomfort)/10 • Stiffness \(report.patientReported.stiffness)/10 • Difficulty \(report.patientReported.difficulty)/10")
                     if report.patientReported.reviewWithPhysiotherapist {
@@ -70,6 +99,13 @@ struct AfterCareReportView: View {
                 Button("Continue to RehabPal") { _ = state.viewReport() }
                     .buttonStyle(.borderedProminent).controlSize(.extraLarge)
             }.padding(50).frame(maxWidth: 820)
+            }
+        } else {
+            ContentUnavailableView(
+                "Report unavailable",
+                systemImage: "chart.xyaxis.line",
+                description: Text("Complete the measured assessments and symptom check before viewing today’s report.")
+            )
         }
     }
 

@@ -66,6 +66,30 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(state.canStartAssessment)
     }
 
+    // Break caught: any result with the right exercise enum could unlock the
+    // daily gate even when it did not complete the prescribed dose.
+    @MainActor
+    func testDailyGateAcceptsOnlyTheExactPrescriptionDose() {
+        let state = unlockedRoutine()
+        let incomplete = GameplayResult(
+            exercise: .balance,
+            prescribedDose: state.prescription.balanceTargetCount,
+            completedDose: state.prescription.balanceTargetCount - 1,
+            trackingNote: "Measured incomplete attempt"
+        )
+        let wrongGoal = GameplayResult(
+            exercise: .balance,
+            prescribedDose: state.prescription.balanceTargetCount - 1,
+            completedDose: state.prescription.balanceTargetCount - 1,
+            trackingNote: "Measured against the wrong goal"
+        )
+
+        XCTAssertFalse(state.completeExercise(.balance, result: incomplete))
+        XCTAssertFalse(state.completeExercise(.balance, result: wrongGoal))
+        XCTAssertTrue(state.completedExercises.isEmpty)
+        XCTAssertFalse(state.canStartAssessment)
+    }
+
     @MainActor
     func testHandAssessmentCannotFinishWithMissingDigits() {
         let state = unlockedRoutine()
@@ -85,8 +109,7 @@ final class AppStateTests: XCTestCase {
 
         let wristRequest = RehabSessionRequest(
             experience: .wristAssessment,
-            prescription: state.prescription,
-            goal: 10
+            prescription: state.prescription
         )
         XCTAssertTrue(state.activateSession(wristRequest, provenance: .live))
         XCTAssertTrue(state.cancelSessionAndReturnToRoutine())
@@ -98,8 +121,7 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(state.completeWristAssessment(AssessmentResult.fixture.wrist))
         let handRequest = RehabSessionRequest(
             experience: .handAssessment,
-            prescription: state.prescription,
-            goal: 10
+            prescription: state.prescription
         )
         XCTAssertTrue(state.activateSession(handRequest, provenance: .demo))
         XCTAssertTrue(state.cancelSessionAndReturnToRoutine())
@@ -117,7 +139,7 @@ final class AppStateTests: XCTestCase {
 
         let malformedWrist = RehabSessionRequest(
             experience: .wristAssessment,
-            prescription: state.prescription,
+            affectedHand: state.prescription.affectedHand,
             goal: 6
         )
         XCTAssertFalse(state.activateSession(malformedWrist, provenance: .live))
@@ -126,7 +148,7 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(state.completeWristAssessment(AssessmentResult.fixture.wrist))
         let malformedHand = RehabSessionRequest(
             experience: .handAssessment,
-            prescription: state.prescription,
+            affectedHand: state.prescription.affectedHand,
             goal: 9
         )
         XCTAssertFalse(state.activateSession(malformedHand, provenance: .demo))

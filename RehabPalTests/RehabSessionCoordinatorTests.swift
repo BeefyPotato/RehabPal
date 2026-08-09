@@ -9,8 +9,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
 
         let request = RehabSessionRequest(
             experience: .exercise(.squeeze),
-            prescription: prescription,
-            goal: prescription.squeezeRepetitions
+            prescription: prescription
         )
 
         XCTAssertEqual(request.experience, .exercise(.squeeze))
@@ -22,17 +21,16 @@ final class RehabSessionCoordinatorTests: XCTestCase {
     func testSharedDiagnosticGoalContractReturnsOnlyExactValidatedAttempts() {
         let wrist = RehabSessionRequest(
             experience: .wristAssessment,
-            prescription: .demo,
-            goal: 10
+            prescription: .demo
         )
         let malformedHand = RehabSessionRequest(
             experience: .handAssessment,
-            prescription: .demo,
+            affectedHand: .right,
             goal: 6
         )
         let exercise = RehabSessionRequest(
             experience: .exercise(.balance),
-            prescription: .demo,
+            affectedHand: .right,
             goal: 6
         )
 
@@ -59,8 +57,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
         let request = RehabSessionRequest(
             experience: .exercise(.squeeze),
-            prescription: .demo,
-            goal: 5
+            prescription: .demo
         )
 
         await coordinator.startLive(request)
@@ -98,7 +95,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
         let request = RehabSessionRequest(
             experience: .wristAssessment,
-            prescription: .demo,
+            affectedHand: .right,
             goal: 6
         )
 
@@ -121,8 +118,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
         let request = RehabSessionRequest(
             experience: .exercise(.squeeze),
-            prescription: .demo,
-            goal: 5
+            prescription: .demo
         )
 
         await coordinator.startLive(request)
@@ -153,8 +149,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
         let request = RehabSessionRequest(
             experience: .exercise(.balance),
-            prescription: .demo,
-            goal: 10
+            prescription: .demo
         )
 
         await coordinator.startLive(request)
@@ -179,8 +174,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
         let request = RehabSessionRequest(
             experience: .wristAssessment,
-            prescription: .demo,
-            goal: 10
+            prescription: .demo
         )
 
         await coordinator.startLive(request)
@@ -216,8 +210,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
         let request = RehabSessionRequest(
             experience: .exercise(.squeeze),
-            prescription: .demo,
-            goal: 5
+            prescription: .demo
         )
         await coordinator.startLive(request)
         coordinator.accept(SessionProgress(completed: 2, goal: 5, partial: 0.75))
@@ -251,8 +244,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
         let request = RehabSessionRequest(
             experience: .handAssessment,
-            prescription: .demo,
-            goal: 10
+            prescription: .demo
         )
         await coordinator.startLive(request)
 
@@ -270,8 +262,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         )
         let request = RehabSessionRequest(
             experience: .handAssessment,
-            prescription: .demo,
-            goal: 10
+            prescription: .demo
         )
         await coordinator.startLive(request)
 
@@ -294,8 +285,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         )
         let request = RehabSessionRequest(
             experience: .wristAssessment,
-            prescription: .demo,
-            goal: 5
+            prescription: .demo
         )
         await coordinator.startLive(request)
         coordinator.receiveJointFrame(nil, at: 1)
@@ -307,7 +297,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         XCTAssertFalse(delivery.isFinished)
 
         coordinator.receiveJointFrame(trackedFrame(hand: .right, at: 1.1), at: 1.1)
-        coordinator.accept(SessionProgress(completed: 5, goal: 5, partial: 0))
+        coordinator.accept(SessionProgress(completed: 10, goal: 10, partial: 0))
         delivery.attempt {
             coordinator.finish(with: .wristAssessment(AssessmentResult.fixture.wrist)) != nil
         }
@@ -326,8 +316,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         )
         let request = RehabSessionRequest(
             experience: .handAssessment,
-            prescription: .demo,
-            goal: 5
+            prescription: .demo
         )
         await coordinator.startLive(request)
         coordinator.receiveJointFrame(nil, at: 1)
@@ -339,7 +328,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         XCTAssertFalse(delivery.isFinished)
 
         coordinator.receiveJointFrame(trackedFrame(hand: .right, at: 1.1), at: 1.1)
-        coordinator.accept(SessionProgress(completed: 5, goal: 5, partial: 0))
+        coordinator.accept(SessionProgress(completed: 10, goal: 10, partial: 0))
         delivery.attempt {
             coordinator.finish(with: .handAssessment(AssessmentResult.fixture.handROM)) != nil
         }
@@ -357,8 +346,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
         let request = RehabSessionRequest(
             experience: .exercise(.balance),
-            prescription: .demo,
-            goal: 10
+            prescription: .demo
         )
         await coordinator.startLive(request)
 
@@ -383,8 +371,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
         let request = RehabSessionRequest(
             experience: .exercise(.balance),
-            prescription: .demo,
-            goal: 10
+            prescription: .demo
         )
         await coordinator.startLive(request)
         coordinator.receiveJointFrame(nil, at: 1)
@@ -407,8 +394,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         let coordinator = RehabSessionCoordinator(prescription: state.prescription, liveTracking: live)
         let request = RehabSessionRequest(
             experience: .exercise(.balance),
-            prescription: state.prescription,
-            goal: 10
+            prescription: state.prescription
         )
         await coordinator.startLive(request)
         coordinator.accept(SessionProgress(completed: 10, goal: 10, partial: 0))
@@ -461,8 +447,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(state.answerMedication(taken: true))
         let request = RehabSessionRequest(
             experience: .exercise(.balance),
-            prescription: state.prescription,
-            goal: 10
+            prescription: state.prescription
         )
         let progress = SessionProgress(completed: 10, goal: 10, partial: 0)
         let result = GameplayResult(

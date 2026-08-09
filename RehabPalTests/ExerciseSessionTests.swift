@@ -151,6 +151,24 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertTrue(result.trackingNote.contains("Measured"))
     }
 
+    // Break caught: button-driven Demo Mode ball drops can be reported as live
+    // measured physics outcomes.
+    func testBalanceDemoCompletionLabelsThePayloadSimulated() throws {
+        var session = BalanceSession(
+            affectedHand: .right,
+            goal: 1,
+            seed: 17,
+            isSimulated: true
+        )
+        let frame = calibratedFrame(hand: .right)
+        _ = session.process(frame: frame, ballPosition: .zero, ballEscaped: false)
+        _ = session.process(frame: frame, ballPosition: session.currentTarget.position, ballEscaped: false)
+
+        let result = try XCTUnwrap(session.result)
+        XCTAssertTrue(result.trackingNote.contains("Simulated"))
+        XCTAssertFalse(result.trackingNote.contains("Measured"))
+    }
+
     func testExerciseSessionsDoNotProgressWhileTrackingIsLost() {
         var squeeze = SqueezeSession(repetitions: 1, closeThreshold: 0.7, reopenThreshold: 0.3, holdSeconds: 0.5)
         XCTAssertFalse(squeeze.update(closure: 0.8, at: 0, isTracked: false))

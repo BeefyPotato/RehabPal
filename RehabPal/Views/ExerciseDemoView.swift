@@ -63,7 +63,7 @@ struct ExerciseDemoView: View {
     private var introduction: String {
         exercise == .balance
             ? "Tilt your wrist to guide the ball into \(prescription.balanceTargetCount) changing holes."
-            : "Pick up your real stress ball. Close, hold gently, and fully reopen; RehabPal observes motion, never grip force."
+            : "Pick up your real stress ball for \(prescription.squeezeRepetitions) close–hold–reopen repetitions. RehabPal observes motion, never grip force."
     }
 
     private var fallbackDisclosure: some View {

@@ -71,7 +71,12 @@ final class AppState {
 
     @discardableResult
     func completeExercise(_ exercise: ExerciseKind, result: GameplayResult) -> Bool {
-        guard canStartExercises, result.exercise == exercise, exerciseResults[exercise] == nil else {
+        let prescribedGoal = prescription.goal(for: .exercise(exercise))
+        guard canStartExercises,
+              result.exercise == exercise,
+              result.prescribedDose == prescribedGoal,
+              result.completedDose == prescribedGoal,
+              exerciseResults[exercise] == nil else {
             return false
         }
         exerciseResults[exercise] = result
@@ -88,6 +93,7 @@ final class AppState {
     ) -> Bool {
         guard activeSession == nil,
               request.affectedHand == prescription.affectedHand,
+              request == prescription.sessionRequest(for: request.experience),
               request.hasValidGoal,
               canActivate(request.experience) else {
             return false
@@ -112,6 +118,7 @@ final class AppState {
               outcome.request.affectedHand == prescription.affectedHand,
               outcome.progress.completed == outcome.progress.goal,
               outcome.progress.goal == outcome.request.goal,
+              outcome.payload.matches(outcome.request),
               sessionOutcomes[outcome.request.experience] == nil else {
             return false
         }

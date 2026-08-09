@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct WristAssessmentView: View {
+    let prescription: Prescription
     let useDemoFallback: Bool
 
     var body: some View {
@@ -10,7 +11,7 @@ struct WristAssessmentView: View {
             Text("Fixed conditions every demo day")
                 .font(.title2)
             InstructionMediaCard(kind: .wristAssessment)
-            Text("Two automatic attempts each: center, forward, backward, left, and right.")
+            Text("\(prescription.wristDiagnostic.attemptsPerDirection) automatic attempts each: center, forward, backward, left, and right.")
                 .multilineTextAlignment(.center)
             Label(useDemoFallback ? "Demo fallback active" : "Live hand tracking", systemImage: "hand.raised")
                 .foregroundStyle(useDemoFallback ? .orange : .green)
@@ -26,13 +27,14 @@ struct WristAssessmentView: View {
 }
 
 struct HandROMAssessmentView: View {
+    let prescription: Prescription
     let useDemoFallback: Bool
 
     var body: some View {
         VStack(spacing: 22) {
             Text("Hand range of motion").font(.largeTitle.bold())
             InstructionMediaCard(kind: .fingerROM)
-            Text("The immersive diagnostic advances automatically through two attempts for all five digits.")
+            Text("The immersive diagnostic advances automatically through \(prescription.fingerDiagnostic.attemptsPerDigit) attempts for all five digits.")
                 .font(.title2).multilineTextAlignment(.center)
             Label(useDemoFallback ? "Demo values active" : "HandTrackingProvider joint tracking", systemImage: "hand.raised")
                 .foregroundStyle(useDemoFallback ? .orange : .green)

@@ -93,6 +93,8 @@ final class RehabSessionCoordinator {
     var squeezeCloseThreshold: Float { prescription.squeezeCloseThreshold }
     var squeezeReopenThreshold: Float { prescription.squeezeReopenThreshold }
     var squeezeHoldSeconds: TimeInterval { prescription.squeezeHoldSeconds }
+    var wristDiagnosticPrescription: WristDiagnosticPrescription { prescription.wristDiagnostic }
+    var fingerDiagnosticPrescription: FingerDiagnosticPrescription { prescription.fingerDiagnostic }
 
     var currentFrame: HandJointFrame? {
         latestAcceptedJointFrame
@@ -137,7 +139,8 @@ final class RehabSessionCoordinator {
             ))
             return
         }
-        guard request.hasValidGoal else {
+        guard request == prescription.sessionRequest(for: request.experience),
+              request.hasValidGoal else {
             phase = .failed(SessionFailure(
                 request: request,
                 reason: .invalidGoal,
@@ -293,7 +296,7 @@ final class RehabSessionCoordinator {
     func finish(with payload: SessionOutcomePayload) -> RehabSessionOutcome? {
         guard case let .active(request, progress, provenance) = phase,
               progress.completed == progress.goal,
-              payload.matches(request.experience) else {
+              payload.matches(request) else {
             return nil
         }
         let outcome = RehabSessionOutcome(
@@ -344,20 +347,5 @@ final class RehabSessionCoordinator {
             reason: reason,
             recoveryActions: [.retryLive, .enterDemoMode, .cancel]
         ))
-    }
-}
-
-private extension SessionOutcomePayload {
-    func matches(_ experience: RehabExperience) -> Bool {
-        switch (experience, self) {
-        case let (.exercise(exercise), .gameplay(result)):
-            result.exercise == exercise
-        case (.wristAssessment, .wristAssessment):
-            true
-        case (.handAssessment, .handAssessment):
-            true
-        default:
-            false
-        }
     }
 }

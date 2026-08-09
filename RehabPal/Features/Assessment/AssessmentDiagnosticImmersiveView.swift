@@ -46,7 +46,8 @@ struct WristDiagnosticImmersiveView: View {
         _processor = State(initialValue: WristDiagnosticProcessor(
             affectedHand: request.affectedHand,
             attemptsPerTarget: attempts ?? 1,
-            isSimulated: coordinator.isUsingDemoMode
+            isSimulated: coordinator.isUsingDemoMode,
+            configuration: coordinator.wristDiagnosticPrescription
         ))
     }
 
@@ -120,11 +121,13 @@ struct WristDiagnosticImmersiveView: View {
         case .waitingForCalibration:
             phaseLabel = "Hold the prescribed hand neutral with four level knuckles"
         case let .ready(target, _, _):
-            phaseLabel = target == .center ? "Hold neutral" : "Move to the 20° target"
+            phaseLabel = target == .center
+                ? "Hold neutral"
+                : "Move to the \(processor.configuration.targetDegrees.formatted())° target"
         case let .holding(_, elapsed, _, _):
-            phaseLabel = "Hold steady \(elapsed.formatted(.number.precision(.fractionLength(1)))) / 0.5 s"
+            phaseLabel = "Hold steady \(elapsed.formatted(.number.precision(.fractionLength(1)))) / \(processor.configuration.holdSeconds.formatted()) s"
         case .returnToNeutral:
-            phaseLabel = "Return to neutral within 5°"
+            phaseLabel = "Return to neutral within \(processor.configuration.neutralReturnToleranceDegrees.formatted())°"
         case .attemptCompleted:
             phaseLabel = "Next attempt"
             onProgress(processor.progress)
@@ -149,13 +152,14 @@ struct WristDiagnosticImmersiveView: View {
         }
         guard let target = processor.currentTarget else { return }
         let holdStartedAt = demoTimestamp + 0.1
-        for step in 0...5 {
+        let holdSteps = Int(ceil(processor.configuration.holdSeconds / 0.1))
+        for step in 0...holdSteps {
             handle(processor.process(frame: demoWristFrame(
                 target: target,
                 at: holdStartedAt + Double(step) / 10
             )))
         }
-        demoTimestamp = holdStartedAt + WristDiagnosticProcessor.holdSeconds
+        demoTimestamp = holdStartedAt + processor.configuration.holdSeconds
         demoTimestamp += 0.1
         handle(processor.process(frame: demoWristFrame(target: .center, at: demoTimestamp)))
     }
@@ -164,7 +168,7 @@ struct WristDiagnosticImmersiveView: View {
         target: WristAssessmentTarget,
         at timestamp: TimeInterval
     ) -> HandJointFrame {
-        let degrees = WristDiagnosticProcessor.targetDegrees * .pi / 180
+        let degrees = processor.configuration.targetDegrees * .pi / 180
         let pitch: Float
         let roll: Float
         switch target {
@@ -193,7 +197,7 @@ struct FingerDiagnosticImmersiveView: View {
 
     @State private var processor: FingerROMDiagnosticProcessor
     @State private var subscriptions = FingerDiagnosticSubscriptionHolder()
-    @State private var phaseLabel = "Stabilize extension for 0.3 seconds"
+    @State private var phaseLabel: String
     @State private var demoTimestamp: TimeInterval = 0
     @State private var completionDelivery = DiagnosticCompletionDelivery()
 
@@ -210,10 +214,12 @@ struct FingerDiagnosticImmersiveView: View {
         configurationError = attempts == nil
             ? "The finger diagnostic goal is invalid. Close this session and retry."
             : nil
+        _phaseLabel = State(initialValue: "Stabilize extension for \(coordinator.fingerDiagnosticPrescription.extensionStabilitySeconds.formatted()) seconds")
         _processor = State(initialValue: FingerROMDiagnosticProcessor(
             affectedHand: request.affectedHand,
             attemptsPerDigit: attempts ?? 1,
-            isSimulated: coordinator.isUsingDemoMode
+            isSimulated: coordinator.isUsingDemoMode,
+            configuration: coordinator.fingerDiagnosticPrescription
         ))
     }
 
@@ -277,15 +283,15 @@ struct FingerDiagnosticImmersiveView: View {
     private func handle(_ event: FingerDiagnosticEvent) {
         switch event {
         case .stabilizingExtension:
-            phaseLabel = "Stabilize extension for 0.3 seconds"
+            phaseLabel = "Stabilize extension for \(processor.configuration.extensionStabilitySeconds.formatted()) seconds"
         case .capturingMotion:
             phaseLabel = processor.currentDigit == .thumb
-                ? "Oppose thumb toward little finger"
-                : "Flex through at least 15° total excursion"
+                ? "Oppose thumb by \((processor.configuration.thumbOppositionReduction * 100).formatted())% toward little finger"
+                : "Flex through at least \(processor.configuration.minimumTotalExcursionDegrees.formatted())° total excursion"
         case .returningToExtension:
             phaseLabel = processor.currentDigit == .thumb
-                ? "Return thumb within 10% of baseline"
-                : "Return within 8° of extension"
+                ? "Return thumb within \((processor.configuration.thumbOppositionReturnTolerance * 100).formatted())% of baseline"
+                : "Return within \(processor.configuration.extensionReturnToleranceDegrees.formatted())° of extension"
         case .attemptCompleted:
             phaseLabel = "Next attempt"
             onProgress(processor.progress)
@@ -307,7 +313,8 @@ struct FingerDiagnosticImmersiveView: View {
         }
         let baselineOpposition: Float? = digit == .thumb ? 0.08 : nil
         let extensionStartedAt = demoTimestamp
-        for step in 0...3 {
+        let extensionSteps = Int(ceil(processor.configuration.extensionStabilitySeconds / 0.1))
+        for step in 0...extensionSteps {
             handle(processor.process(sample: demoSample(
                 digit: digit,
                 flexion: .zero,
@@ -315,12 +322,14 @@ struct FingerDiagnosticImmersiveView: View {
                 at: extensionStartedAt + Double(step) / 10
             )))
         }
-        demoTimestamp = extensionStartedAt + FingerROMDiagnosticProcessor.extensionStabilitySeconds
+        demoTimestamp = extensionStartedAt + processor.configuration.extensionStabilitySeconds
         demoTimestamp += 0.1
         handle(processor.process(sample: demoSample(
             digit: digit,
-            flexion: [20, 10, 5],
-            opposition: digit == .thumb ? 0.05 : nil,
+            flexion: [processor.configuration.minimumTotalExcursionDegrees + 5, 10, 5],
+            opposition: digit == .thumb
+                ? 0.08 * max(0, 1 - processor.configuration.thumbOppositionReduction - 0.05)
+                : nil,
             at: demoTimestamp
         )))
         demoTimestamp += 0.1

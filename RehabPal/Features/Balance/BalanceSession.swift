@@ -48,6 +48,7 @@ struct BalanceSession: Sendable {
     let affectedHand: AffectedHand
     let goal: Int
     let schedule: BalanceTargetSchedule
+    let isSimulated: Bool
 
     private(set) var completedSuccesses = 0
     private(set) var result: GameplayResult?
@@ -58,13 +59,20 @@ struct BalanceSession: Sendable {
         self.init(
             affectedHand: prescription.affectedHand,
             goal: prescription.balanceTargetCount,
-            seed: seed
+            seed: seed,
+            isSimulated: false
         )
     }
 
-    init(affectedHand: AffectedHand, goal: Int, seed: UInt64) {
+    init(
+        affectedHand: AffectedHand,
+        goal: Int,
+        seed: UInt64,
+        isSimulated: Bool = false
+    ) {
         self.affectedHand = affectedHand
         self.goal = max(1, goal)
+        self.isSimulated = isSimulated
         schedule = BalanceTargetSchedule(seed: seed, targetCount: goal)
     }
 
@@ -133,7 +141,9 @@ struct BalanceSession: Sendable {
                 exercise: .balance,
                 prescribedDose: goal,
                 completedDose: completedSuccesses,
-                trackingNote: "Measured from calibrated affected-hand wrist tilt and physics ball drops"
+                trackingNote: isSimulated
+                    ? "Simulated from explicit Demo Mode physics ball drops"
+                    : "Measured from calibrated affected-hand wrist tilt and physics ball drops"
             )
         }
         return .scored(

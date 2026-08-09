@@ -5,34 +5,83 @@ enum AffectedHand: String, Equatable, Sendable {
     case right
 }
 
+struct WristDiagnosticPrescription: Equatable, Sendable {
+    let attemptsPerDirection: Int
+    let targetDegrees: Float
+    let targetToleranceDegrees: Float
+    let offAxisToleranceDegrees: Float
+    let holdSeconds: TimeInterval
+    let neutralReturnToleranceDegrees: Float
+}
+
+struct FingerDiagnosticPrescription: Equatable, Sendable {
+    let attemptsPerDigit: Int
+    let extensionStabilitySeconds: TimeInterval
+    let extensionStabilityToleranceDegrees: Float
+    let minimumTotalExcursionDegrees: Float
+    let extensionReturnToleranceDegrees: Float
+    let thumbOppositionReduction: Float
+    let thumbOppositionReturnTolerance: Float
+}
+
 struct Prescription: Equatable, Sendable {
     let affectedHand: AffectedHand
     let balanceTargetCount: Int
-    let balanceCorrectionsPerDirection: Int
-    let balanceCentreTolerance: Float
-    let balanceHoldSeconds: TimeInterval
     let squeezeRepetitions: Int
     let squeezeCloseThreshold: Float
     let squeezeReopenThreshold: Float
     let squeezeHoldSeconds: TimeInterval
-    let assessmentAttemptsPerDirection: Int
-    let assessmentSqueezeRepetitions: Int
+    let wristDiagnostic: WristDiagnosticPrescription
+    let fingerDiagnostic: FingerDiagnosticPrescription
     let symptomReviewThreshold: Int
 
     nonisolated static let demo = Prescription(
         affectedHand: .right,
         balanceTargetCount: 10,
-        balanceCorrectionsPerDirection: 1,
-        balanceCentreTolerance: 0.16,
-        balanceHoldSeconds: 0.8,
         squeezeRepetitions: 5,
         squeezeCloseThreshold: 0.72,
         squeezeReopenThreshold: 0.28,
         squeezeHoldSeconds: 0.7,
-        assessmentAttemptsPerDirection: 2,
-        assessmentSqueezeRepetitions: 5,
+        wristDiagnostic: WristDiagnosticPrescription(
+            attemptsPerDirection: 2,
+            targetDegrees: 20,
+            targetToleranceDegrees: 5,
+            offAxisToleranceDegrees: 5,
+            holdSeconds: 0.5,
+            neutralReturnToleranceDegrees: 5
+        ),
+        fingerDiagnostic: FingerDiagnosticPrescription(
+            attemptsPerDigit: 2,
+            extensionStabilitySeconds: 0.3,
+            extensionStabilityToleranceDegrees: 3,
+            minimumTotalExcursionDegrees: 15,
+            extensionReturnToleranceDegrees: 8,
+            thumbOppositionReduction: 0.25,
+            thumbOppositionReturnTolerance: 0.10
+        ),
         symptomReviewThreshold: 6
     )
+
+    func goal(for experience: RehabExperience) -> Int {
+        switch experience {
+        case .exercise(.balance):
+            balanceTargetCount
+        case .exercise(.squeeze):
+            squeezeRepetitions
+        case .wristAssessment:
+            wristDiagnostic.attemptsPerDirection * WristAssessmentTarget.allCases.count
+        case .handAssessment:
+            fingerDiagnostic.attemptsPerDigit * HandDigit.allCases.count
+        }
+    }
+
+    func sessionRequest(for experience: RehabExperience) -> RehabSessionRequest {
+        RehabSessionRequest(
+            experience: experience,
+            affectedHand: affectedHand,
+            goal: goal(for: experience)
+        )
+    }
 }
 
 enum ExerciseKind: String, CaseIterable, Equatable, Hashable, Sendable {

@@ -41,7 +41,8 @@ struct BalancePlatformView: View {
         _game = State(initialValue: BalanceSession(
             affectedHand: request.affectedHand,
             goal: request.goal,
-            seed: seed
+            seed: seed,
+            isSimulated: coordinator.isUsingDemoMode
         ))
     }
 

@@ -11,12 +11,8 @@ struct RehabSessionRequest: Equatable, Hashable, Sendable {
     let affectedHand: AffectedHand
     let goal: Int
 
-    init(experience: RehabExperience, prescription: Prescription, goal: Int) {
-        self.init(
-            experience: experience,
-            affectedHand: prescription.affectedHand,
-            goal: goal
-        )
+    init(experience: RehabExperience, prescription: Prescription) {
+        self = prescription.sessionRequest(for: experience)
     }
 
     init(experience: RehabExperience, affectedHand: AffectedHand, goal: Int) {
@@ -77,6 +73,26 @@ enum SessionOutcomePayload: Equatable, Sendable {
     case gameplay(GameplayResult)
     case wristAssessment(AssessmentResult.WristResult)
     case handAssessment([HandDigit: DigitROMSummary])
+}
+
+extension SessionOutcomePayload {
+    func matches(_ request: RehabSessionRequest) -> Bool {
+        switch (request.experience, self) {
+        case let (.exercise(exercise), .gameplay(result)):
+            result.exercise == exercise &&
+            result.prescribedDose == request.goal &&
+            result.completedDose == request.goal
+        case (.wristAssessment, .wristAssessment):
+            true
+        case let (.handAssessment, .handAssessment(result)):
+            Set(result.keys) == Set(HandDigit.allCases) &&
+            result.values.allSatisfy {
+                $0.attemptCount == request.diagnosticAttemptsPerSubject
+            }
+        default:
+            false
+        }
+    }
 }
 
 struct RehabSessionOutcome: Equatable, Sendable {

@@ -49,10 +49,12 @@ struct ContentView: View {
                     }
                 case .wristAssessment:
                     WristAssessmentView(
+                        prescription: state.prescription,
                         useDemoFallback: session.isUsingDemoMode
                     )
                 case .handAssessment:
                     HandROMAssessmentView(
+                        prescription: state.prescription,
                         useDemoFallback: session.isUsingDemoMode
                     )
                 case .symptoms:
@@ -165,23 +167,11 @@ struct ContentView: View {
         case .routine:
             guard let selectedExercise else { return nil }
             guard selectedExercise != .squeeze || squeezeStarted else { return nil }
-            return RehabSessionRequest(
-                experience: .exercise(selectedExercise),
-                prescription: state.prescription,
-                goal: selectedExercise == .balance ? state.prescription.balanceTargetCount : state.prescription.squeezeRepetitions
-            )
+            return state.prescription.sessionRequest(for: .exercise(selectedExercise))
         case .wristAssessment:
-            return RehabSessionRequest(
-                experience: .wristAssessment,
-                prescription: state.prescription,
-                goal: state.prescription.assessmentAttemptsPerDirection * WristAssessmentTarget.allCases.count
-            )
+            return state.prescription.sessionRequest(for: .wristAssessment)
         case .handAssessment:
-            return RehabSessionRequest(
-                experience: .handAssessment,
-                prescription: state.prescription,
-                goal: HandDigit.allCases.count * 2
-            )
+            return state.prescription.sessionRequest(for: .handAssessment)
         default:
             return nil
         }
