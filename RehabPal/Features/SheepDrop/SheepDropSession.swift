@@ -157,14 +157,10 @@ struct SheepDropSession: Sendable {
             lastSheepPosition = observation.position
         }
         guard timestamp.isFinite else {
-            return invalidateCurrentDwell(observation: observation)
+            return rejectInvalidTimestamp()
         }
         if let lastTimestamp, timestamp < lastTimestamp {
-            pickupDwellStartedAt = nil
-            releaseDwellStartedAt = nil
-            return phase == .carrying || phase == .paused
-                ? pause(requiresRecalibration: false)
-                : waitingUpdate()
+            return rejectInvalidTimestamp()
         }
         lastTimestamp = timestamp
 
@@ -183,12 +179,23 @@ struct SheepDropSession: Sendable {
                 phaseBeforePause = nil
                 return processFalling(observation: observation, at: timestamp)
             }
-            guard phaseBeforePause == .carrying else {
+            if phaseBeforePause == .carrying {
+                phase = .carrying
+                phaseBeforePause = nil
+                return processCarry(frame: frame, observation: observation, at: timestamp)
+            }
+            if phaseBeforePause == .success {
+                phase = .success
+                phaseBeforePause = nil
+                return processSuccess(at: timestamp)
+            }
+            if phaseBeforePause == .resetting {
+                phase = .resetting
+                phaseBeforePause = nil
+                clearAttemptState()
                 return waitingUpdate()
             }
-            phase = .carrying
-            phaseBeforePause = nil
-            return processCarry(frame: frame, observation: observation, at: timestamp)
+            return waitingUpdate()
         case .falling:
             return processFalling(observation: observation, at: timestamp)
         case .success:
@@ -205,6 +212,10 @@ struct SheepDropSession: Sendable {
     }
 
     mutating func pause(requiresRecalibration: Bool) -> SheepDropUpdate {
+        if phase == .complete, let result {
+            return SheepDropUpdate(event: .complete(result), command: .none)
+        }
+
         pickupDwellStartedAt = nil
         releaseDwellStartedAt = nil
         settledDwellStartedAt = nil
@@ -213,8 +224,16 @@ struct SheepDropSession: Sendable {
         phase = .paused
 
         if requiresRecalibration {
-            clearAttemptState()
-            phaseBeforePause = .waitingForHand
+            if previousPhase == .success {
+                releasedAt = nil
+                clearCarryState()
+                phaseBeforePause = .success
+            } else {
+                clearAttemptState()
+                phaseBeforePause = previousPhase == .resetting
+                    ? .resetting
+                    : .waitingForHand
+            }
             return SheepDropUpdate(
                 event: .trackingPaused(requiresRecalibration: true),
                 command: resetCommand
@@ -311,15 +330,51 @@ struct SheepDropSession: Sendable {
         )
     }
 
-    private mutating func invalidateCurrentDwell(
-        observation: SheepDropObservation
-    ) -> SheepDropUpdate {
+    private mutating func rejectInvalidTimestamp() -> SheepDropUpdate {
         pickupDwellStartedAt = nil
         releaseDwellStartedAt = nil
-        if phase == .carrying || phase == .paused {
-            return pause(requiresRecalibration: false)
+        settledDwellStartedAt = nil
+
+        switch phase {
+        case .findingTable, .waitingForHand, .formingGrasp:
+            return waitingUpdate()
+        case .carrying:
+            return SheepDropUpdate(
+                event: .carrying,
+                command: .freeze(position: lastSheepPosition)
+            )
+        case .falling:
+            return SheepDropUpdate(
+                event: .falling,
+                command: .freeze(position: lastSheepPosition)
+            )
+        case .success:
+            guard let successDeadline else {
+                return SheepDropUpdate(
+                    event: .trackingPaused(requiresRecalibration: false),
+                    command: .freeze(position: lastSheepPosition)
+                )
+            }
+            return SheepDropUpdate(
+                event: .successWaiting(deadline: successDeadline),
+                command: .none
+            )
+        case .resetting:
+            return SheepDropUpdate(
+                event: .trackingPaused(requiresRecalibration: false),
+                command: .freeze(position: lastSheepPosition)
+            )
+        case .paused:
+            return SheepDropUpdate(
+                event: .trackingPaused(requiresRecalibration: false),
+                command: .freeze(position: lastSheepPosition)
+            )
+        case .complete:
+            guard let result else {
+                return SheepDropUpdate(event: .falling, command: .none)
+            }
+            return SheepDropUpdate(event: .complete(result), command: .none)
         }
-        return waitingUpdate()
     }
 
     private mutating func waitingUpdate() -> SheepDropUpdate {

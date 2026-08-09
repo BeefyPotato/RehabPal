@@ -614,6 +614,167 @@ final class SheepDropSessionTests: XCTestCase {
         )
     }
 
+    // Break caught: routing a non-finite or regressed timestamp through the
+    // pickup waiting path abandons the explicit release and prevents scoring.
+    func testInvalidOrRegressedTimestampPreservesFallingAndExplicitRelease() {
+        for (label, invalidTimestamp) in [("non-finite", .nan), ("regressed", 0.40)] {
+            var session = releasedSession()
+            let settled = observation(position: SIMD3<Float>(0, 0.03, 0))
+            _ = session.process(frame: nil, observation: settled, at: 0.50)
+
+            let rejected = session.process(
+                frame: nil,
+                observation: settled,
+                at: invalidTimestamp
+            )
+
+            XCTAssertEqual(rejected.event, .falling, label)
+            XCTAssertEqual(
+                rejected.command,
+                .freeze(position: SIMD3<Float>(0, 0.03, 0)),
+                label
+            )
+            XCTAssertEqual(session.phase, .falling, label)
+            XCTAssertEqual(session.completedDrops, 0, label)
+
+            let restarted = session.process(frame: nil, observation: settled, at: 0.75)
+            let beforeBoundary = session.process(frame: nil, observation: settled, at: 0.99)
+            let atBoundary = session.process(frame: nil, observation: settled, at: 1.00)
+
+            XCTAssertEqual(restarted.event, .falling, label)
+            XCTAssertEqual(beforeBoundary.event, .falling, label)
+            XCTAssertEqual(
+                atBoundary.event,
+                .placementSucceeded(completed: 1, goal: 5, deadline: 1.80),
+                label
+            )
+        }
+    }
+
+    // Break caught: sending bad time through waiting while success owns its
+    // deadline can preserve the integer count but make the final result unreachable.
+    func testInvalidOrRegressedTimestampPreservesSuccessDeadlineAndResult() throws {
+        for (label, invalidTimestamp) in [("non-finite", .nan), ("regressed", 0.70)] {
+            var session = makeSession(goal: 1)
+            scoreOneDrop(session: &session, baseTime: 0)
+
+            let rejected = session.process(
+                frame: nil,
+                observation: observation(position: .zero),
+                at: invalidTimestamp
+            )
+
+            XCTAssertEqual(rejected.event, .successWaiting(deadline: 1.55), label)
+            XCTAssertEqual(rejected.command, .none, label)
+            XCTAssertEqual(session.phase, .success, label)
+            XCTAssertEqual(session.completedDrops, 1, label)
+
+            let completion = session.process(
+                frame: nil,
+                observation: observation(position: .zero),
+                at: 1.55
+            )
+            let result = try XCTUnwrap(session.result, label)
+            XCTAssertEqual(completion.event, .complete(result), label)
+        }
+    }
+
+    // Break caught: a global bad-time fallback can move an already complete
+    // processor back to waiting and break terminal idempotence.
+    func testInvalidOrRegressedTimestampKeepsCompletionTerminal() throws {
+        for (label, invalidTimestamp) in [("non-finite", .nan), ("regressed", 0.70)] {
+            var session = completedOneDropSession()
+            let result = try XCTUnwrap(session.result, label)
+
+            let rejected = session.process(
+                frame: nil,
+                observation: observation(position: .zero),
+                at: invalidTimestamp
+            )
+
+            XCTAssertEqual(rejected.event, .complete(result), label)
+            XCTAssertEqual(rejected.command, .none, label)
+            XCTAssertEqual(session.phase, .complete, label)
+            XCTAssertEqual(session.result, result, label)
+        }
+    }
+
+    // Break caught: restoring only carrying/falling after pause loses the
+    // final success deadline; recalibration must not erase the earned result path.
+    func testPauseDuringFinalSuccessPreservesResultForBothPauseModes() throws {
+        for requiresRecalibration in [false, true] {
+            var session = makeSession(goal: 1)
+            scoreOneDrop(session: &session, baseTime: 0)
+
+            let pause = session.pause(requiresRecalibration: requiresRecalibration)
+
+            XCTAssertEqual(
+                pause.event,
+                .trackingPaused(requiresRecalibration: requiresRecalibration)
+            )
+            XCTAssertEqual(session.progress, SessionProgress(completed: 1, goal: 1, partial: 0))
+
+            let completion = session.process(
+                frame: nil,
+                observation: observation(position: .zero),
+                at: 1.55
+            )
+            let result = try XCTUnwrap(session.result)
+            XCTAssertEqual(completion.event, .complete(result))
+            XCTAssertEqual(session.phase, .complete)
+        }
+    }
+
+    // Break caught: losing nonfinal success across pause prevents the owned
+    // deadline from emitting the reset command for the next sheep.
+    func testPauseDuringNonfinalSuccessPreservesResetForBothPauseModes() {
+        for requiresRecalibration in [false, true] {
+            var session = makeSession(goal: 2)
+            scoreOneDrop(session: &session, baseTime: 0)
+
+            _ = session.pause(requiresRecalibration: requiresRecalibration)
+            let reset = session.process(
+                frame: nil,
+                observation: observation(position: .zero),
+                at: 1.55
+            )
+
+            XCTAssertEqual(reset.event, .resetAfterSuccess)
+            XCTAssertEqual(
+                reset.command,
+                .reset(
+                    position: SIMD3<Float>(0.25, 0.03, 0),
+                    linearVelocity: .zero,
+                    angularVelocity: .zero
+                )
+            )
+            XCTAssertEqual(session.phase, .resetting)
+            XCTAssertEqual(session.progress, SessionProgress(completed: 1, goal: 2, partial: 0))
+        }
+    }
+
+    // Break caught: applying pause generically after completion can overwrite
+    // the terminal phase and immutable result for either recovery mode.
+    func testPauseAfterCompletionKeepsTerminalResultForBothPauseModes() throws {
+        for requiresRecalibration in [false, true] {
+            var session = completedOneDropSession()
+            let result = try XCTUnwrap(session.result)
+
+            let pause = session.pause(requiresRecalibration: requiresRecalibration)
+            let duplicate = session.process(
+                frame: nil,
+                observation: observation(position: .zero),
+                at: 2
+            )
+
+            XCTAssertEqual(pause.event, .complete(result))
+            XCTAssertEqual(pause.command, .none)
+            XCTAssertEqual(duplicate.event, .complete(result))
+            XCTAssertEqual(session.phase, .complete)
+            XCTAssertEqual(session.result, result)
+        }
+    }
+
     // Break caught: finishing at an assumed default or incrementing on reset
     // produces a result whose prescribed/completed dose is not exactly five.
     func testFiveSuccessfulDropsCreateSheepDropGameplayResult() throws {
@@ -817,6 +978,22 @@ final class SheepDropSessionTests: XCTestCase {
         )
         XCTAssertEqual(session.phase, .success)
         XCTAssertEqual(success.command, .none)
+    }
+
+    private func completedOneDropSession() -> SheepDropSession {
+        var session = makeSession(goal: 1)
+        scoreOneDrop(session: &session, baseTime: 0)
+        let completion = session.process(
+            frame: nil,
+            observation: observation(position: .zero),
+            at: 1.55
+        )
+        XCTAssertEqual(session.phase, .complete)
+        XCTAssertNotNil(session.result)
+        if let result = session.result {
+            XCTAssertEqual(completion.event, .complete(result))
+        }
+        return session
     }
 
     private func tips(

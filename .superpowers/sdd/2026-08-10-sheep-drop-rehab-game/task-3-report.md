@@ -15,7 +15,7 @@ types.
     safe-volume clamping, tracking-loss commands, explicit-release scoring,
     deterministic success/reset deadlines, progress, and result provenance.
 - `RehabPalTests/SheepDropSessionTests.swift`
-  - Added 27 mutation-named tests against real processor behavior.
+  - Added 33 mutation-named tests against real processor behavior.
 - `RehabPalTests/JointFrameTests.swift`
   - Unchanged; the Sheep Drop-specific synthetic frame helper remains local to
     `SheepDropSessionTests`.
@@ -76,8 +76,8 @@ xcodebuild test-without-building -project RehabPal.xcodeproj -scheme RehabPal \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-Result: exit `0`; 41 tests executed, 0 failures (27 Sheep Drop tests and 14
-Joint Frame tests).
+Result before review round 1: exit `0`; 41 tests executed, 0 failures (27 Sheep
+Drop tests and 14 Joint Frame tests).
 
 Focused generic test build:
 
@@ -87,6 +87,50 @@ xcodebuild build-for-testing -quiet -project RehabPal.xcodeproj -scheme RehabPal
   -only-testing:RehabPalTests/SheepDropSessionTests \
   -only-testing:RehabPalTests/JointFrameTests \
   -derivedDataPath /private/tmp/RehabPalSheepTask3FinalGenericTests \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+Result: exit `0`, with no compiler warnings.
+
+## Review round 1 lifecycle fixes
+
+The six new lifecycle tests were first run serially with explicit
+`-only-testing` selectors and derived data
+`/private/tmp/RehabPalSheepTask3ReviewRed`. Result: exit `65`; all six tests
+failed with 34 assertions against the reviewed defects:
+
+- non-finite/regressed time moved `falling`, `success`, and `complete` to
+  `waitingForHand`;
+- pause made final and nonfinal success deadlines unreachable;
+- pause moved terminal completion out of its idempotent phase.
+
+The minimal fix rejects bad time through a phase-aware update. It clears only
+partial dwell, freezes active physics where needed, and retains release,
+success-deadline, reset, and result state. Pause now resumes `success`, finishes
+an already-issued `resetting` transition, preserves the deadline through
+recalibration, and is a no-op result emission after `complete`.
+
+Fresh focused serial runtime verification:
+
+```bash
+xcodebuild test -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'platform=visionOS Simulator,id=2005850E-20C9-4441-B27B-1F665EFB1164' \
+  -parallel-testing-enabled NO \
+  -only-testing:RehabPalTests/SheepDropSessionTests \
+  -only-testing:RehabPalTests/JointFrameTests \
+  -derivedDataPath /private/tmp/RehabPalSheepTask3ReviewFinalRuntime \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+Result: exit `0`; 47 tests executed, 0 failures (33 Sheep Drop tests and 14
+Joint Frame tests).
+
+Fresh generic app verification:
+
+```bash
+xcodebuild build -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'generic/platform=visionOS' \
+  -derivedDataPath /private/tmp/RehabPalSheepTask3ReviewFinalBuild \
   CODE_SIGNING_ALLOWED=NO
 ```
 
@@ -120,6 +164,8 @@ Result: exit `0`, with no compiler warnings.
   scores, and all reset commands set linear and angular velocities to zero.
 - Confirmed progress includes grasp partial only before pickup, and result notes
   distinguish live five-fingertip observations from simulated joint observations.
+- Confirmed non-finite/regressed time cannot undo release, success, or terminal
+  completion, and pause cannot erase an earned success deadline or result.
 - Confirmed no RealityKit or ARKit symbol occurs in the processor.
 
 ## Concerns
