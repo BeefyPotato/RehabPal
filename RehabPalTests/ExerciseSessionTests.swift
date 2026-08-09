@@ -224,7 +224,25 @@ final class ExerciseSessionTests: XCTestCase {
         ) else {
             return XCTFail("Expected one demo action to accept the grasp baseline")
         }
-        XCTAssertNotNil(session.facePose)
+        let facePose = try XCTUnwrap(session.facePose)
+        let presentation = SqueezeHUDPresentation(
+            statusLabel: session.statusLabel,
+            graspDetected: true
+        )
+
+        XCTAssertNil(facePose.surfacePosition(toward: nil))
+        XCTAssertEqual(
+            presentation.graspDisclosure,
+            "Grasp pose detected (not object verified)"
+        )
+        XCTAssertEqual(
+            presentation.demoActionTitle,
+            "Complete close–hold–reopen (Demo Mode)"
+        )
+        XCTAssertEqual(
+            session.process(sample: squeezeSample(at: 5.1, closure: 1)),
+            .active(closure: 1, phase: .closing)
+        )
     }
 
     // Break caught: threshold crossing can skip hold/reopen phases, double-count, or continue past the exact goal.

@@ -5,6 +5,21 @@ private final class SqueezeSubscriptionHolder {
     var update: EventSubscription?
 }
 
+struct SqueezeHUDPresentation: Equatable {
+    let statusLabel: String?
+    let graspDetected: Bool
+
+    var graspDisclosure: String? {
+        graspDetected ? statusLabel : nil
+    }
+
+    var demoActionTitle: String {
+        graspDetected
+            ? "Complete close–hold–reopen (Demo Mode)"
+            : "Detect grasp (Demo Mode)"
+    }
+}
+
 /// An inferred overlay for the user's physical stress ball. The scene contains
 /// facial features only; it intentionally never renders a virtual ball mesh.
 struct SqueezeBuddyView: View {
@@ -71,9 +86,10 @@ struct SqueezeBuddyView: View {
                 SqueezeHUD(
                     progress: game.progress,
                     phase: game.phase,
-                    statusLabel: game.statusLabel,
-                    faceVisible: game.facePose != nil && coordinator.currentViewerPosition != nil,
-                    graspDetected: game.facePose != nil,
+                    presentation: SqueezeHUDPresentation(
+                        statusLabel: game.statusLabel,
+                        graspDetected: game.facePose != nil
+                    ),
                     pauseReason: coordinator.pauseReason,
                     isDemo: coordinator.isUsingDemoMode,
                     onDemoStep: performDemoStep
@@ -186,9 +202,7 @@ struct SqueezeBuddyView: View {
 private struct SqueezeHUD: View {
     let progress: SessionProgress
     let phase: SqueezeRepDetector.Phase
-    let statusLabel: String?
-    let faceVisible: Bool
-    let graspDetected: Bool
+    let presentation: SqueezeHUDPresentation
     let pauseReason: SessionPauseReason?
     let isDemo: Bool
     let onDemoStep: () -> Void
@@ -206,8 +220,8 @@ private struct SqueezeHUD: View {
             if pauseReason != nil {
                 Label("Tracking paused — face hidden", systemImage: "pause.circle.fill")
                     .foregroundStyle(.orange)
-            } else if let statusLabel, faceVisible {
-                Text(statusLabel)
+            } else if let graspDisclosure = presentation.graspDisclosure {
+                Text(graspDisclosure)
                     .font(.caption.bold())
                     .foregroundStyle(.green)
             } else {
@@ -219,7 +233,7 @@ private struct SqueezeHUD: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             if isDemo, progress.completed < progress.goal {
-                Button(graspDetected ? "Complete close–hold–reopen (Demo Mode)" : "Detect grasp (Demo Mode)", action: onDemoStep)
+                Button(presentation.demoActionTitle, action: onDemoStep)
                     .buttonStyle(.borderedProminent)
                 Text("SIMULATED")
                     .font(.caption2.bold())
