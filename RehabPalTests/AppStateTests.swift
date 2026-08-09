@@ -28,7 +28,7 @@ final class AppStateTests: XCTestCase {
 
             XCTAssertTrue(state.completeExercise(order[1], result: .fixture(for: order[1])))
             XCTAssertTrue(state.canStartAssessment)
-            XCTAssertEqual(state.stage, .assessment)
+            XCTAssertEqual(state.stage, .wristAssessment)
         }
     }
 
@@ -36,14 +36,16 @@ final class AppStateTests: XCTestCase {
     func testAssessmentSymptomsReportAndPetRemainStrictlyOrdered() {
         let state = unlockedRoutine()
 
-        XCTAssertFalse(state.completeAssessment(.fixture))
+        XCTAssertFalse(state.completeWristAssessment(AssessmentResult.fixture.wrist))
         XCTAssertFalse(state.submitSymptoms(.comfortable))
         XCTAssertFalse(state.viewReport())
         XCTAssertFalse(state.feedPet())
 
         XCTAssertTrue(state.completeExercise(.balance, result: .fixture(for: .balance)))
         XCTAssertTrue(state.completeExercise(.squeeze, result: .fixture(for: .squeeze)))
-        XCTAssertTrue(state.completeAssessment(.fixture))
+        XCTAssertTrue(state.completeWristAssessment(AssessmentResult.fixture.wrist))
+        XCTAssertEqual(state.stage, .handAssessment)
+        XCTAssertTrue(state.completeHandROMAssessment(AssessmentResult.fixture.handROM))
         XCTAssertEqual(state.stage, .symptomCheck)
         XCTAssertTrue(state.submitSymptoms(.comfortable))
         XCTAssertEqual(state.stage, .report)
@@ -62,6 +64,16 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(state.completeExercise(.balance, result: .fixture(for: .balance)))
         XCTAssertEqual(state.completedExercises, [.balance])
         XCTAssertFalse(state.canStartAssessment)
+    }
+
+    @MainActor
+    func testHandAssessmentCannotFinishWithMissingDigits() {
+        let state = unlockedRoutine()
+        XCTAssertTrue(state.completeExercise(.balance, result: .fixture(for: .balance)))
+        XCTAssertTrue(state.completeExercise(.squeeze, result: .fixture(for: .squeeze)))
+        XCTAssertTrue(state.completeWristAssessment(AssessmentResult.fixture.wrist))
+        XCTAssertFalse(state.completeHandROMAssessment([.index: AssessmentResult.fixture.handROM[.index]!]))
+        XCTAssertEqual(state.stage, .handAssessment)
     }
 
     @MainActor
@@ -84,10 +96,40 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testEarnedTreatFeedsOnceAndRoutineResetPreservesHunger() {
+        let defaults = UserDefaults(suiteName: "AppStateHunger.\(UUID().uuidString)")!
+        let now = Date(timeIntervalSince1970: 4_000_000)
+        let hunger = PetHungerStore(defaults: defaults, now: now)
+        let state = AppState(hunger: hunger)
+
+        completeRoutineThroughReport(state)
+
+        XCTAssertTrue(state.feedPet(at: now))
+        XCTAssertFalse(state.feedPet(at: now))
+        XCTAssertEqual(hunger.fullness, 70, accuracy: 0.001)
+
+        state.resetDemoDay()
+
+        XCTAssertEqual(hunger.fullness, 70, accuracy: 0.001)
+    }
+
+    @MainActor
     private func unlockedRoutine() -> AppState {
         let state = AppState()
         XCTAssertTrue(state.startRoutine())
         XCTAssertTrue(state.answerMedication(taken: true))
         return state
+    }
+
+    @MainActor
+    private func completeRoutineThroughReport(_ state: AppState) {
+        XCTAssertTrue(state.startRoutine())
+        XCTAssertTrue(state.answerMedication(taken: true))
+        XCTAssertTrue(state.completeExercise(.balance, result: .fixture(for: .balance)))
+        XCTAssertTrue(state.completeExercise(.squeeze, result: .fixture(for: .squeeze)))
+        XCTAssertTrue(state.completeWristAssessment(AssessmentResult.fixture.wrist))
+        XCTAssertTrue(state.completeHandROMAssessment(AssessmentResult.fixture.handROM))
+        XCTAssertTrue(state.submitSymptoms(.comfortable))
+        XCTAssertTrue(state.viewReport())
     }
 }

@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 
 @MainActor
@@ -7,7 +8,8 @@ final class AppState {
         case home
         case medicationGate
         case routine
-        case assessment
+        case wristAssessment
+        case handAssessment
         case symptomCheck
         case report
         case petReward
@@ -16,21 +18,25 @@ final class AppState {
 
     let prescription: Prescription
     let history: DemoHistory
+    let hunger: PetHungerStore
 
     private(set) var stage: Stage = .home
     private(set) var medicationConfirmed = false
     private(set) var exerciseResults: [ExerciseKind: GameplayResult] = [:]
     private(set) var assessmentResult: AssessmentResult?
+    private var wristAssessment: AssessmentResult.WristResult?
     private(set) var symptomResult: SymptomResult?
     private(set) var reportViewed = false
     private(set) var petIsFull = false
 
     init(
         prescription: Prescription = .demo,
-        history: DemoHistory = .fixture
+        history: DemoHistory = .fixture,
+        hunger: PetHungerStore? = nil
     ) {
         self.prescription = prescription
         self.history = history
+        self.hunger = hunger ?? PetHungerStore()
     }
 
     var completedExercises: Set<ExerciseKind> {
@@ -68,15 +74,24 @@ final class AppState {
         }
         exerciseResults[exercise] = result
         if canStartAssessment {
-            stage = .assessment
+            stage = .wristAssessment
         }
         return true
     }
 
     @discardableResult
-    func completeAssessment(_ result: AssessmentResult) -> Bool {
-        guard stage == .assessment, canStartAssessment else { return false }
-        assessmentResult = result
+    func completeWristAssessment(_ result: AssessmentResult.WristResult) -> Bool {
+        guard stage == .wristAssessment, canStartAssessment else { return false }
+        wristAssessment = result
+        stage = .handAssessment
+        return true
+    }
+
+    @discardableResult
+    func completeHandROMAssessment(_ result: [HandDigit: DigitROMSummary]) -> Bool {
+        guard stage == .handAssessment, let wristAssessment else { return false }
+        guard Set(result.keys) == Set(HandDigit.allCases) else { return false }
+        assessmentResult = AssessmentResult(wrist: wristAssessment, handROM: result)
         stage = .symptomCheck
         return true
     }
@@ -98,11 +113,20 @@ final class AppState {
     }
 
     @discardableResult
-    func feedPet() -> Bool {
+    func feedPet(at date: Date = .now) -> Bool {
         guard stage == .petReward, reportViewed, !petIsFull else { return false }
+        hunger.feed(at: date)
         petIsFull = true
         stage = .complete
         return true
+    }
+
+    func resolvePetHunger(at date: Date = .now) {
+        hunger.resolve(at: date)
+    }
+
+    func simulatePetDay(at date: Date = .now) {
+        hunger.simulateDayPassing(at: date)
     }
 
     func resetDemoDay() {
@@ -110,6 +134,7 @@ final class AppState {
         medicationConfirmed = false
         exerciseResults.removeAll()
         assessmentResult = nil
+        wristAssessment = nil
         symptomResult = nil
         reportViewed = false
         petIsFull = false

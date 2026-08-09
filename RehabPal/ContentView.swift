@@ -31,8 +31,10 @@ struct ContentView: View {
                     } else {
                         DailyRoutineView(state: state) { selectedExercise = $0 }
                     }
-                case .assessment:
-                    AssessmentView(state: state, useDemoFallback: useDemoFallback)
+                case .wristAssessment:
+                    WristAssessmentView(state: state, useDemoFallback: useDemoFallback)
+                case .handAssessment:
+                    HandROMAssessmentView(state: state, useDemoFallback: useDemoFallback, liveObservation: handTracking.latestObservation)
                 case .symptoms:
                     SymptomCheckView(state: state)
                 case .report:
@@ -54,7 +56,7 @@ struct ContentView: View {
             .padding(24)
         }
         .sheet(isPresented: $showingSettings) {
-            DemoSettingsView(useDemoFallback: $useDemoFallback)
+            DemoSettingsView(state: state, useDemoFallback: $useDemoFallback)
         }
         .task(id: useDemoFallback) {
             if !useDemoFallback {
