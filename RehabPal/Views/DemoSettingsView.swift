@@ -2,19 +2,17 @@ import SwiftUI
 
 struct DemoSettingsView: View {
     let state: AppState
-    @Binding var useDemoFallback: Bool
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Form {
-                Toggle("Use clearly labeled demo fallback", isOn: $useDemoFallback)
                 Button("Simulate one day passing") {
                     state.simulatePetDay()
                 }
-                Text("Fallback injects synthetic wrist and hand observations through the same detectors. It cannot bypass medication, exercise, assessment, symptom, report, or pet gates.")
+                Text("RehabPal always tries live hand tracking first. If startup fails, the session offers Retry or an explicitly labeled Demo Mode; it never switches to simulated input silently.")
                     .foregroundStyle(.secondary)
-                Text("On device, turn fallback off and grant hand-tracking permission. Tracking loss pauses active progress.")
+                Text("Tracking loss pauses active progress, discards partial movement, and requires recalibration after two seconds.")
                     .foregroundStyle(.secondary)
             }
             .navigationTitle("Demo settings")

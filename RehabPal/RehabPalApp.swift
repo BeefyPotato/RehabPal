@@ -13,5 +13,10 @@ struct RehabPalApp: App {
         WindowGroup {
             ContentView()
         }
+
+        ImmersiveSpace(id: RehabSessionCoordinator.immersiveSpaceID) {
+            SharedRehabImmersiveView()
+        }
+        .immersionStyle(selection: .constant(.mixed), in: .mixed)
     }
 }

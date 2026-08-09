@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct WristAssessmentView: View {
-    let state: AppState
     let useDemoFallback: Bool
+    let onComplete: (AssessmentResult.WristResult) -> Void
 
     var body: some View {
         VStack(spacing: 24) {
@@ -15,7 +15,7 @@ struct WristAssessmentView: View {
                 .multilineTextAlignment(.center)
             Label(useDemoFallback ? "Demo fallback active" : "Live hand tracking", systemImage: "hand.raised")
                 .foregroundStyle(useDemoFallback ? .orange : .green)
-            Button("Complete fixed wrist checks") { _ = state.completeWristAssessment(AssessmentResult.fixture.wrist) }
+            Button("Complete fixed wrist checks") { onComplete(AssessmentResult.fixture.wrist) }
             .buttonStyle(.borderedProminent)
             .controlSize(.extraLarge)
             Text("App-estimated movement measures; not clinical goniometer or strength measurements.")
@@ -27,9 +27,9 @@ struct WristAssessmentView: View {
 }
 
 struct HandROMAssessmentView: View {
-    let state: AppState
     let useDemoFallback: Bool
     let liveObservation: MovementObservation
+    let onComplete: ([HandDigit: DigitROMSummary]) -> Void
     @State private var digitIndex = 0
     @State private var attempt = 1
     @State private var results: [HandDigit: DigitROMSummary] = [:]
@@ -83,7 +83,7 @@ struct HandROMAssessmentView: View {
         if digitIndex < HandDigit.allCases.count - 1 {
             digitIndex += 1
         } else {
-            _ = state.completeHandROMAssessment(completedResults)
+            onComplete(completedResults)
         }
     }
 }

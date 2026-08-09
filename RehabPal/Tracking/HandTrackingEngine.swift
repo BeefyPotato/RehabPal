@@ -7,6 +7,7 @@ import simd
 final class HandTrackingEngine: MovementObservationSource {
     private let session = ARKitSession()
     private let provider = HandTrackingProvider()
+    private var updateTask: Task<Void, Never>?
     private(set) var latestObservation = MovementObservation.untracked(at: 0)
     private(set) var latestJointFrame: HandJointFrame?
     private(set) var lastError: String?
@@ -14,19 +15,35 @@ final class HandTrackingEngine: MovementObservationSource {
 
     var isSupported: Bool { HandTrackingProvider.isSupported }
 
-    func start() async {
+    func start() async throws {
         guard isSupported else {
-            lastError = "Hand tracking is unavailable in this environment."
-            return
+            let message = "Hand tracking is unavailable in this environment."
+            lastError = message
+            throw HandTrackingSessionError.unavailable(message)
         }
         do {
             try await session.run([provider])
-            for await update in provider.anchorUpdates {
-                consume(update.anchor)
+            lastError = nil
+            updateTask?.cancel()
+            updateTask = Task { [weak self] in
+                guard let self else { return }
+                for await update in provider.anchorUpdates {
+                    guard !Task.isCancelled else { return }
+                    consume(update.anchor)
+                }
             }
         } catch {
             lastError = "Hand tracking could not start: \(error.localizedDescription)"
+            throw error
         }
+    }
+
+    func stop() {
+        updateTask?.cancel()
+        updateTask = nil
+        session.stop()
+        latestJointFrame = nil
+        latestObservation = .untracked(at: ProcessInfo.processInfo.systemUptime)
     }
 
     private func consume(_ anchor: HandAnchor) {
@@ -109,5 +126,16 @@ final class HandTrackingEngine: MovementObservationSource {
 
     private func jointAngle(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) -> Float {
         MovementMath.angle(between: a - b, and: c - b) * 180 / .pi
+    }
+}
+
+extension HandTrackingEngine: LiveHandJointSession {}
+
+private enum HandTrackingSessionError: LocalizedError {
+    case unavailable(String)
+
+    var errorDescription: String? {
+        guard case let .unavailable(message) = self else { return nil }
+        return message
     }
 }
