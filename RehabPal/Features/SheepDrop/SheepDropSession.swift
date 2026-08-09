@@ -153,9 +153,6 @@ struct SheepDropSession: Sendable {
         observation: SheepDropObservation,
         at timestamp: TimeInterval
     ) -> SheepDropUpdate {
-        if observation.position.hasFiniteComponents {
-            lastSheepPosition = observation.position
-        }
         guard timestamp.isFinite else {
             return rejectInvalidTimestamp()
         }
@@ -163,6 +160,9 @@ struct SheepDropSession: Sendable {
             return rejectInvalidTimestamp()
         }
         lastTimestamp = timestamp
+        if observation.position.hasFiniteComponents {
+            lastSheepPosition = observation.position
+        }
 
         switch phase {
         case .findingTable, .waitingForHand, .formingGrasp:

@@ -15,7 +15,7 @@ types.
     safe-volume clamping, tracking-loss commands, explicit-release scoring,
     deterministic success/reset deadlines, progress, and result provenance.
 - `RehabPalTests/SheepDropSessionTests.swift`
-  - Added 33 mutation-named tests against real processor behavior.
+  - Added 34 mutation-named tests against real processor behavior.
 - `RehabPalTests/JointFrameTests.swift`
   - Unchanged; the Sheep Drop-specific synthetic frame helper remains local to
     `SheepDropSessionTests`.
@@ -136,6 +136,45 @@ xcodebuild build -quiet -project RehabPal.xcodeproj -scheme RehabPal \
 
 Result: exit `0`, with no compiler warnings.
 
+## Review round 2 timestamp-position ordering fix
+
+A new real-processor regression passed a deliberately different position with
+both a non-finite timestamp and a regressed timestamp. The mutation it catches
+is accepting spatial state before accepting chronology. Its serial RED run used
+derived data `/private/tmp/RehabPalSheepTask3Round2Red`: one test executed with
+two expected failures, because both rejected packets froze at the stale packet's
+position instead of the last accepted position.
+
+The minimal fix moves the finite-position assignment after both timestamp
+guards. The same focused test then exited `0` with derived data
+`/private/tmp/RehabPalSheepTask3Round2Green`.
+
+Fresh full serial runtime verification:
+
+```bash
+xcodebuild test -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'platform=visionOS Simulator,id=2005850E-20C9-4441-B27B-1F665EFB1164' \
+  -parallel-testing-enabled NO \
+  -only-testing:RehabPalTests/SheepDropSessionTests \
+  -only-testing:RehabPalTests/JointFrameTests \
+  -derivedDataPath /private/tmp/RehabPalSheepTask3Round2FinalRuntime \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+Result: exit `0`; 48 tests executed, 0 failures (34 Sheep Drop tests and 14
+Joint Frame tests).
+
+Fresh generic app verification:
+
+```bash
+xcodebuild build -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'generic/platform=visionOS' \
+  -derivedDataPath /private/tmp/RehabPalSheepTask3Round2FinalBuild \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+Result: exit `0`, with no compiler warnings.
+
 Generic app build:
 
 ```bash
@@ -165,7 +204,8 @@ Result: exit `0`, with no compiler warnings.
 - Confirmed progress includes grasp partial only before pickup, and result notes
   distinguish live five-fingertip observations from simulated joint observations.
 - Confirmed non-finite/regressed time cannot undo release, success, or terminal
-  completion, and pause cannot erase an earned success deadline or result.
+  completion, cannot replace the last accepted sheep position, and pause cannot
+  erase an earned success deadline or result.
 - Confirmed no RealityKit or ARKit symbol occurs in the processor.
 
 ## Concerns

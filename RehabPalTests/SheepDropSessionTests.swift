@@ -651,6 +651,31 @@ final class SheepDropSessionTests: XCTestCase {
         }
     }
 
+    // Break caught: accepting observation position before timestamp validation
+    // lets a rejected stale packet move the frozen sheep backward.
+    func testInvalidOrRegressedTimestampCannotReplaceLastAcceptedFallingPosition() {
+        for (label, invalidTimestamp) in [("non-finite", .nan), ("regressed", 0.40)] {
+            var session = releasedSession()
+            let acceptedPosition = SIMD3<Float>(0, 0.03, 0)
+            let stalePosition = SIMD3<Float>(0.4, 0.25, -0.3)
+            _ = session.process(
+                frame: nil,
+                observation: observation(position: acceptedPosition),
+                at: 0.50
+            )
+
+            let rejected = session.process(
+                frame: nil,
+                observation: observation(position: stalePosition),
+                at: invalidTimestamp
+            )
+
+            XCTAssertEqual(rejected.event, .falling, label)
+            XCTAssertEqual(rejected.command, .freeze(position: acceptedPosition), label)
+            XCTAssertEqual(session.phase, .falling, label)
+        }
+    }
+
     // Break caught: sending bad time through waiting while success owns its
     // deadline can preserve the integer count but make the final result unreachable.
     func testInvalidOrRegressedTimestampPreservesSuccessDeadlineAndResult() throws {
