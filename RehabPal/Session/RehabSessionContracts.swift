@@ -24,6 +24,7 @@ struct RehabSessionRequest: Equatable, Hashable, Sendable {
 
 extension RehabSessionRequest {
     static let diagnosticSubjectCount = 5
+    static let minimumDiagnosticAttemptsPerSubject = 2
 
     var hasValidGoal: Bool {
         guard goal > 0 else { return false }
@@ -31,7 +32,8 @@ extension RehabSessionRequest {
         case .exercise:
             return true
         case .wristAssessment, .handAssessment:
-            return goal.isMultiple(of: Self.diagnosticSubjectCount)
+            return goal.isMultiple(of: Self.diagnosticSubjectCount) &&
+            goal / Self.diagnosticSubjectCount >= Self.minimumDiagnosticAttemptsPerSubject
         }
     }
 
@@ -119,6 +121,8 @@ struct SessionFailure: Equatable, Sendable {
         case invalidGoal
         case liveTrackingUnavailable
         case liveStartupFailed(String)
+        case liveAuthorizationDenied
+        case liveProviderFailed(String)
         case immersiveSpaceFailed(String)
     }
 

@@ -42,6 +42,27 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         XCTAssertNil(exercise.diagnosticAttemptsPerSubject)
     }
 
+    // Break caught: a one-attempt-per-subject prescription can complete while
+    // every resulting digit summary is guaranteed to be unavailable.
+    @MainActor
+    func testDiagnosticGoalRequiresAtLeastTwoAttemptsPerSubject() {
+        let oneAttemptWrist = RehabSessionRequest(
+            experience: .wristAssessment,
+            affectedHand: .right,
+            goal: 5
+        )
+        let twoAttemptHand = RehabSessionRequest(
+            experience: .handAssessment,
+            affectedHand: .right,
+            goal: 10
+        )
+
+        XCTAssertFalse(oneAttemptWrist.hasValidGoal)
+        XCTAssertNil(oneAttemptWrist.diagnosticAttemptsPerSubject)
+        XCTAssertTrue(twoAttemptHand.hasValidGoal)
+        XCTAssertEqual(twoAttemptHand.diagnosticAttemptsPerSubject, 2)
+    }
+
     @MainActor
     func testCoordinatorPublishesTheCurrentViewerPositionFromLiveTracking() {
         let live = TestLiveJointSource()
@@ -60,7 +81,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             prescription: .demo
         )
 
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
         XCTAssertNil(coordinator.currentViewerPosition)
         XCTAssertTrue(coordinator.startDemoMode())
         XCTAssertNil(coordinator.currentViewerPosition)
@@ -76,7 +97,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             goal: 10
         )
 
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
 
         XCTAssertEqual(
             coordinator.phase,
@@ -99,7 +120,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             goal: 6
         )
 
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
 
         XCTAssertEqual(
             coordinator.phase,
@@ -121,7 +142,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             prescription: .demo
         )
 
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
         XCTAssertTrue(coordinator.shouldMonitorFrames)
         coordinator.accept(SessionProgress(completed: 5, goal: 5, partial: 0))
         let result = GameplayResult(
@@ -152,7 +173,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             prescription: .demo
         )
 
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
 
         guard case let .failed(failure) = coordinator.phase else {
             return XCTFail("Expected a recoverable live-start failure")
@@ -177,9 +198,9 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             prescription: .demo
         )
 
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
         let failedMonitoringGeneration = coordinator.monitoringGeneration
-        await coordinator.retryLive()
+        await coordinator.retryLiveForTesting()
         XCTAssertEqual(coordinator.provenance, .live)
         XCTAssertEqual(live.startCount, 2)
         XCTAssertGreaterThan(
@@ -190,7 +211,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         coordinator.cancel()
         let alwaysFailing = TestLiveJointSource(startResults: [.failure(TestLiveError.denied)])
         let demoCoordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: alwaysFailing)
-        await demoCoordinator.startLive(request)
+        await demoCoordinator.startLiveForTesting(request)
         XCTAssertTrue(demoCoordinator.startDemoMode())
         XCTAssertEqual(demoCoordinator.provenance, .demo)
         XCTAssertTrue(demoCoordinator.isUsingDemoMode)
@@ -212,7 +233,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             experience: .exercise(.squeeze),
             prescription: .demo
         )
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
         coordinator.accept(SessionProgress(completed: 2, goal: 5, partial: 0.75))
 
         coordinator.receiveJointFrame(nil, at: 4)
@@ -233,9 +254,134 @@ final class RehabSessionCoordinatorTests: XCTestCase {
 
         coordinator.receiveJointFrame(trackedFrame(hand: .right, at: 6.1), at: 6.1)
         XCTAssertEqual(coordinator.pauseReason, .trackingLost(requiresRecalibration: true))
+        let generation = coordinator.pendingProcessorResetGeneration
+        XCTAssertNotNil(generation)
+        XCTAssertFalse(coordinator.confirmRecalibration())
+        XCTAssertTrue(coordinator.acknowledgeProcessorReset(generation!))
+        XCTAssertNil(coordinator.pendingProcessorResetGeneration)
+        XCTAssertFalse(coordinator.confirmRecalibration())
+        XCTAssertTrue(coordinator.acknowledgeProcessorCalibration(
+            generation: generation!,
+            frameTimestamp: 6.1
+        ))
         XCTAssertTrue(coordinator.confirmRecalibration())
         XCTAssertEqual(coordinator.progress, SessionProgress(completed: 2, goal: 5, partial: 0))
         XCTAssertNil(coordinator.pauseReason)
+    }
+
+    // Break caught: repeatedly polling an old affected-hand frame can keep a
+    // session active forever after ARKit has stopped publishing updates.
+    @MainActor
+    func testStaleAffectedHandFrameIsTrackingLoss() async {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource(),
+            maximumFrameAge: 0.2
+        )
+        let request = RehabSessionRequest(
+            experience: .exercise(.balance),
+            prescription: .demo
+        )
+        await coordinator.startLiveForTesting(request)
+
+        coordinator.receiveJointFrame(trackedFrame(hand: .right, at: 1), at: 1.21)
+
+        XCTAssertEqual(coordinator.pauseReason, .trackingLost(requiresRecalibration: false))
+        XCTAssertNil(coordinator.currentFrame)
+    }
+
+    // Break caught: chirality alone can accept a frame whose joints are too
+    // incomplete for the active processor to use safely.
+    @MainActor
+    func testRequiredJointConfidenceFailureIsTrackingLoss() async {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource()
+        )
+        let request = RehabSessionRequest(
+            experience: .exercise(.balance),
+            prescription: .demo
+        )
+        await coordinator.startLiveForTesting(request)
+        coordinator.updateRequiredJoints(WristNeutralCalibration.requiredJoints)
+        var joints = trackedFrame(hand: .right, at: 1).joints
+        joints[.littleFingerKnuckle] = .untracked
+
+        coordinator.receiveJointFrame(
+            .synthetic(hand: .right, timestamp: 1, joints: joints),
+            at: 1
+        )
+
+        XCTAssertEqual(coordinator.pauseReason, .trackingLost(requiresRecalibration: false))
+        XCTAssertNil(coordinator.currentFrame)
+    }
+
+    // Break caught: ARKit provider interruption/authorization events can leave
+    // a live coordinator active even though no usable frames can arrive.
+    @MainActor
+    func testLiveProviderAndAuthorizationEventsBecomeLossOrFailure() async {
+        let live = TestLiveJointSource()
+        let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
+        let request = RehabSessionRequest(
+            experience: .exercise(.balance),
+            prescription: .demo
+        )
+        await coordinator.startLiveForTesting(request)
+
+        live.emit(.interrupted, at: 1)
+        XCTAssertEqual(coordinator.pauseReason, .trackingLost(requiresRecalibration: false))
+
+        live.emit(.authorizationDenied, at: 1.1)
+        guard case let .failed(failure) = coordinator.phase else {
+            return XCTFail("Expected authorization denial to fail the live session")
+        }
+        XCTAssertEqual(failure.reason, .liveAuthorizationDenied)
+
+        let providerLive = TestLiveJointSource()
+        let providerCoordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: providerLive
+        )
+        await providerCoordinator.startLiveForTesting(request)
+        providerLive.emit(.providerFailed("Hand provider stopped"), at: 2)
+        guard case let .failed(providerFailure) = providerCoordinator.phase else {
+            return XCTFail("Expected provider failure to fail the live session")
+        }
+        XCTAssertEqual(
+            providerFailure.reason,
+            .liveProviderFailed("Hand provider stopped")
+        )
+    }
+
+    // Break caught: after a provider interruption, polling the provider's
+    // cached pre-interruption frame can immediately undo the tracking loss.
+    @MainActor
+    func testProviderInterruptionRejectsCachedFrameUntilANewUpdateArrives() async {
+        let live = TestLiveJointSource()
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: live,
+            maximumFrameAge: 1
+        )
+        let request = RehabSessionRequest(
+            experience: .exercise(.balance),
+            prescription: .demo
+        )
+        await coordinator.startLiveForTesting(request)
+        live.latestJointFrame = trackedFrame(hand: .right, at: 1)
+        coordinator.pollLiveTracking(at: 1)
+
+        live.emit(.interrupted, at: 1.05)
+        coordinator.pollLiveTracking(at: 1.1)
+        XCTAssertEqual(
+            coordinator.pauseReason,
+            .trackingLost(requiresRecalibration: false)
+        )
+
+        live.latestJointFrame = trackedFrame(hand: .right, at: 1.2)
+        coordinator.pollLiveTracking(at: 1.2)
+        XCTAssertNil(coordinator.pauseReason)
+        XCTAssertEqual(coordinator.currentFrame?.timestamp, 1.2)
     }
 
     @MainActor
@@ -246,7 +392,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             experience: .handAssessment,
             prescription: .demo
         )
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
 
         coordinator.receiveJointFrame(trackedFrame(hand: .left, at: 1), at: 1)
 
@@ -264,7 +410,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             experience: .handAssessment,
             prescription: .demo
         )
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
 
         coordinator.receiveJointFrame(nil, at: 1)
         coordinator.receiveJointFrame(trackedFrame(hand: .right, at: 1.05), at: 1.05)
@@ -277,6 +423,91 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.consumeDiagnosticObservations().isEmpty)
     }
 
+    // Break caught: if RealityKit stops rendering while monitoring continues,
+    // the diagnostic observation queue can grow without limit.
+    @MainActor
+    func testCoordinatorBoundsDiagnosticObservationQueue() async {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource()
+        )
+        let request = RehabSessionRequest(
+            experience: .handAssessment,
+            prescription: .demo
+        )
+        await coordinator.startLiveForTesting(request)
+
+        for index in 0..<(RehabSessionCoordinator.maximumPendingDiagnosticObservations + 20) {
+            coordinator.receiveJointFrame(nil, at: Double(index) / 20)
+        }
+
+        let observations = coordinator.consumeDiagnosticObservations()
+        XCTAssertEqual(
+            observations.count,
+            RehabSessionCoordinator.maximumPendingDiagnosticObservations
+        )
+        XCTAssertGreaterThan(observations.first?.sequence ?? 0, 1)
+    }
+
+    // Break caught: identical render-cadence progress and pause publications
+    // can trigger observation writes even though user-visible state is unchanged.
+    @MainActor
+    func testCoordinatorDeduplicatesIdenticalProgressAndPauseState() async {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource()
+        )
+        let request = RehabSessionRequest(
+            experience: .exercise(.squeeze),
+            prescription: .demo
+        )
+        await coordinator.startLiveForTesting(request)
+        let progress = SessionProgress(completed: 1, goal: 5, partial: 0.5)
+
+        coordinator.accept(progress)
+        let activeRevision = coordinator.phaseRevision
+        coordinator.accept(progress)
+        XCTAssertEqual(coordinator.phaseRevision, activeRevision)
+
+        coordinator.receiveJointFrame(nil, at: 1)
+        let pausedRevision = coordinator.phaseRevision
+        coordinator.receiveJointFrame(nil, at: 1.05)
+        XCTAssertEqual(coordinator.phaseRevision, pausedRevision)
+    }
+
+    // Break caught: a cancelled/superseded start can publish A's completion or
+    // stop tracking after request B has already become active.
+    @MainActor
+    func testSupersededDelayedStartCannotMutateOrStopNewerSession() async {
+        let live = DelayedLiveJointSource()
+        let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
+        let requestA = RehabSessionRequest(
+            experience: .exercise(.balance),
+            prescription: .demo
+        )
+        let requestB = RehabSessionRequest(
+            experience: .exercise(.squeeze),
+            prescription: .demo
+        )
+
+        let tokenA = try! XCTUnwrap(coordinator.prepareLiveStart(requestA))
+        let startA = Task { await coordinator.startPreparedLive(tokenA) }
+        await live.waitForStartCount(1)
+
+        let tokenB = try! XCTUnwrap(coordinator.prepareLiveStart(requestB))
+        let startB = Task { await coordinator.startPreparedLive(tokenB) }
+        await live.waitForStartCount(2)
+        live.succeedStart(1)
+        _ = await startB.value
+        XCTAssertEqual(coordinator.activeRequest, requestB)
+
+        live.succeedStart(0)
+        _ = await startA.value
+        XCTAssertEqual(coordinator.activeRequest, requestB)
+        XCTAssertEqual(coordinator.provenance, .live)
+        XCTAssertEqual(live.stopCount, 1)
+    }
+
     @MainActor
     func testWristCompletionRemainsPendingUntilCoordinatorResumes() async {
         let coordinator = RehabSessionCoordinator(
@@ -287,7 +518,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             experience: .wristAssessment,
             prescription: .demo
         )
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
         coordinator.receiveJointFrame(nil, at: 1)
         var delivery = DiagnosticCompletionDelivery()
 
@@ -318,7 +549,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             experience: .handAssessment,
             prescription: .demo
         )
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
         coordinator.receiveJointFrame(nil, at: 1)
         var delivery = DiagnosticCompletionDelivery()
 
@@ -348,7 +579,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             experience: .exercise(.balance),
             prescription: .demo
         )
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
 
         XCTAssertNil(coordinator.currentFrame)
         XCTAssertFalse(coordinator.compatibilityObservation.isTracked)
@@ -373,7 +604,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             experience: .exercise(.balance),
             prescription: .demo
         )
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
         coordinator.receiveJointFrame(nil, at: 1)
 
         coordinator.cancel()
@@ -396,7 +627,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             experience: .exercise(.balance),
             prescription: state.prescription
         )
-        await coordinator.startLive(request)
+        await coordinator.startLiveForTesting(request)
         coordinator.accept(SessionProgress(completed: 10, goal: 10, partial: 0))
         let result = GameplayResult(
             exercise: .balance,
@@ -480,8 +711,29 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         .synthetic(
             hand: hand,
             timestamp: timestamp,
-            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+            joints: Dictionary(uniqueKeysWithValues: HandJoint.allCases.map {
+                ($0, HandJointSample.tracked(transform: matrix_identity_float4x4))
+            })
         )
+    }
+}
+
+@MainActor
+extension RehabSessionCoordinator {
+    /// Coordinator tests exercise the prepared-start state machine directly.
+    /// Production launches must go through `RehabSessionLaunchSequence`.
+    func startLiveForTesting(_ request: RehabSessionRequest) async {
+        guard let token = prepareLiveStart(request) else { return }
+        _ = await startPreparedLive(token)
+    }
+
+    func retryLiveForTesting() async {
+        guard case let .failed(failure) = phase,
+              failure.recoveryActions.contains(.retryLive),
+              let token = prepareLiveStart(failure.request) else {
+            return
+        }
+        _ = await startPreparedLive(token)
     }
 }
 
@@ -493,6 +745,7 @@ private final class TestLiveJointSource: LiveHandJointSession {
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private var startResults: [Result<Void, Error>]
+    private var eventHandler: ((LiveHandJointSessionEvent, TimeInterval) -> Void)?
 
     init(startResults: [Result<Void, Error>] = [.success(())]) {
         self.startResults = startResults
@@ -506,6 +759,58 @@ private final class TestLiveJointSource: LiveHandJointSession {
 
     func stop() {
         stopCount += 1
+    }
+
+    func jointFrame(for hand: AffectedHand) -> HandJointFrame? {
+        guard latestJointFrame?.hand == hand else { return nil }
+        return latestJointFrame
+    }
+
+    func setEventHandler(
+        _ handler: @escaping (LiveHandJointSessionEvent, TimeInterval) -> Void
+    ) {
+        eventHandler = handler
+    }
+
+    func emit(_ event: LiveHandJointSessionEvent, at timestamp: TimeInterval) {
+        eventHandler?(event, timestamp)
+    }
+}
+
+@MainActor
+private final class DelayedLiveJointSource: LiveHandJointSession {
+    var isSupported = true
+    var latestJointFrame: HandJointFrame?
+    var viewerPosition: SIMD3<Float>?
+    private(set) var stopCount = 0
+    private var continuations: [Int: CheckedContinuation<Void, Error>] = [:]
+    private var nextStartID = 0
+
+    func start() async throws {
+        let id = nextStartID
+        nextStartID += 1
+        try await withCheckedThrowingContinuation { continuation in
+            continuations[id] = continuation
+        }
+    }
+
+    func stop() {
+        stopCount += 1
+    }
+
+    func jointFrame(for hand: AffectedHand) -> HandJointFrame? {
+        guard latestJointFrame?.hand == hand else { return nil }
+        return latestJointFrame
+    }
+
+    func succeedStart(_ id: Int) {
+        continuations.removeValue(forKey: id)?.resume()
+    }
+
+    func waitForStartCount(_ expected: Int) async {
+        while nextStartID < expected {
+            await Task.yield()
+        }
     }
 }
 

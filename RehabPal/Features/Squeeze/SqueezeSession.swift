@@ -345,6 +345,7 @@ struct SqueezeSession: Sendable {
     var completedRepetitions: Int { detector.completedRepetitions }
     var phase: SqueezeRepDetector.Phase { detector.phase }
     var isComplete: Bool { completedRepetitions >= prescribedRepetitions }
+    var isCalibrated: Bool { graspGate.baseline != nil }
     var progress: SessionProgress {
         SessionProgress(
             completed: completedRepetitions,

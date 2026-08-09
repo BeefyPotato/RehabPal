@@ -5,23 +5,64 @@ import simd
 @MainActor
 @Observable
 final class HandTrackingEngine: MovementObservationSource {
-    private let session = ARKitSession()
-    private let provider = HandTrackingProvider()
-    private let worldTracking = WorldTrackingProvider()
+    private let session: ARKitSession?
+    private let provider: HandTrackingProvider?
+    private let worldTracking: WorldTrackingProvider?
+    private let supported: Bool
+    private let runSession: @MainActor () async throws -> Void
+    private let stopSession: @MainActor () -> Void
+
     private var updateTask: Task<Void, Never>?
+    private var eventTask: Task<Void, Never>?
+    private var eventHandler: ((LiveHandJointSessionEvent, TimeInterval) -> Void)?
+    private var frames = HandJointFrameDemultiplexer()
+    private var startupGeneration = 0
+    private var activeGeneration: Int?
+
     private(set) var latestObservation = MovementObservation.untracked(at: 0)
     private(set) var latestJointFrame: HandJointFrame?
     private(set) var lastError: String?
+    private(set) var isRunning = false
     let isFallback = false
 
-    var isSupported: Bool {
-        HandTrackingProvider.isSupported && WorldTrackingProvider.isSupported
+    init() {
+        let session = ARKitSession()
+        let provider = HandTrackingProvider()
+        let worldTracking = WorldTrackingProvider()
+        self.session = session
+        self.provider = provider
+        self.worldTracking = worldTracking
+        supported = HandTrackingProvider.isSupported && WorldTrackingProvider.isSupported
+        runSession = {
+            try await session.run([provider, worldTracking])
+        }
+        stopSession = {
+            session.stop()
+        }
     }
 
+    /// Injectable session boundary used to prove cancellation and generation
+    /// ordering without constructing ARKit providers in unit tests.
+    init(
+        isSupported: Bool,
+        runSession: @escaping @MainActor () async throws -> Void,
+        stopSession: @escaping @MainActor () -> Void
+    ) {
+        session = nil
+        provider = nil
+        worldTracking = nil
+        supported = isSupported
+        self.runSession = runSession
+        self.stopSession = stopSession
+    }
+
+    var isSupported: Bool { supported }
+
     var viewerPosition: SIMD3<Float>? {
-        guard let anchor = worldTracking.queryDeviceAnchor(
-            atTimestamp: ProcessInfo.processInfo.systemUptime
-        ), anchor.isTracked else {
+        guard let worldTracking,
+              let anchor = worldTracking.queryDeviceAnchor(
+                  atTimestamp: ProcessInfo.processInfo.systemUptime
+              ), anchor.isTracked else {
             return nil
         }
         return anchor.originFromAnchorTransform.translation
@@ -33,111 +74,213 @@ final class HandTrackingEngine: MovementObservationSource {
             lastError = message
             throw HandTrackingSessionError.unavailable(message)
         }
+
+        startupGeneration += 1
+        let generation = startupGeneration
+
         do {
-            try await session.run([provider, worldTracking])
-            lastError = nil
-            updateTask?.cancel()
-            updateTask = Task { [weak self] in
-                guard let self else { return }
-                for await update in provider.anchorUpdates {
-                    guard !Task.isCancelled else { return }
-                    consume(update.anchor)
-                }
-            }
+            try await runSession()
         } catch {
+            guard generation == startupGeneration else {
+                throw CancellationError()
+            }
+            activeGeneration = nil
+            isRunning = false
+            if error is CancellationError || Task.isCancelled {
+                invalidate(generation, stopUnderlyingSession: true)
+                throw CancellationError()
+            }
             lastError = "Hand tracking could not start: \(error.localizedDescription)"
             throw error
         }
+
+        guard generation == startupGeneration else {
+            throw CancellationError()
+        }
+        guard !Task.isCancelled else {
+            invalidate(generation, stopUnderlyingSession: true)
+            throw CancellationError()
+        }
+
+        activeGeneration = generation
+        isRunning = true
+        lastError = nil
+        startUpdateTasks(for: generation)
     }
 
     func stop() {
+        startupGeneration += 1
+        activeGeneration = nil
+        isRunning = false
         updateTask?.cancel()
         updateTask = nil
-        session.stop()
-        latestJointFrame = nil
-        latestObservation = .untracked(at: ProcessInfo.processInfo.systemUptime)
+        eventTask?.cancel()
+        eventTask = nil
+        stopSession()
+        clearPublishedFrames(at: ProcessInfo.processInfo.systemUptime)
     }
 
-    private func consume(_ anchor: HandAnchor) {
-        let timestamp = ProcessInfo.processInfo.systemUptime
-        guard let frame = HandJointFrame(anchor: anchor, timestamp: timestamp),
-              let skeleton = anchor.handSkeleton else {
-            latestJointFrame = nil
-            latestObservation = .untracked(at: timestamp)
+    func jointFrame(for hand: AffectedHand) -> HandJointFrame? {
+        frames.frame(for: hand)
+    }
+
+    func setEventHandler(
+        _ handler: @escaping (LiveHandJointSessionEvent, TimeInterval) -> Void
+    ) {
+        eventHandler = handler
+    }
+
+    private func startUpdateTasks(for generation: Int) {
+        updateTask?.cancel()
+        if let provider {
+            updateTask = Task { [weak self] in
+                for await update in provider.anchorUpdates {
+                    guard !Task.isCancelled else { return }
+                    self?.consume(update, generation: generation)
+                }
+            }
+        }
+
+        eventTask?.cancel()
+        if let session {
+            eventTask = Task { [weak self] in
+                for await event in session.events {
+                    guard !Task.isCancelled else { return }
+                    self?.consume(event, generation: generation)
+                }
+            }
+        }
+    }
+
+    private func consume(
+        _ update: AnchorUpdate<HandAnchor>,
+        generation: Int
+    ) {
+        guard activeGeneration == generation else { return }
+        guard let hand = affectedHand(for: update.anchor.chirality) else { return }
+
+        switch update.event {
+        case .added:
+            applyTrackedUpdate(
+                .added,
+                anchor: update.anchor,
+                hand: hand,
+                timestamp: update.timestamp
+            )
+        case .updated:
+            applyTrackedUpdate(
+                .updated,
+                anchor: update.anchor,
+                hand: hand,
+                timestamp: update.timestamp
+            )
+        case .removed:
+            frames.apply(.removed(hand: hand, timestamp: update.timestamp))
+            publishMostRecentFrame(removing: hand, at: update.timestamp)
+        @unknown default:
+            frames.apply(.removed(hand: hand, timestamp: update.timestamp))
+            publishMostRecentFrame(removing: hand, at: update.timestamp)
+        }
+    }
+
+    private enum TrackedUpdateKind {
+        case added
+        case updated
+    }
+
+    private func applyTrackedUpdate(
+        _ kind: TrackedUpdateKind,
+        anchor: HandAnchor,
+        hand: AffectedHand,
+        timestamp: TimeInterval
+    ) {
+        guard let frame = HandJointFrame(anchor: anchor, timestamp: timestamp) else {
+            frames.apply(.removed(hand: hand, timestamp: timestamp))
+            publishMostRecentFrame(removing: hand, at: timestamp)
             return
+        }
+        switch kind {
+        case .added:
+            frames.apply(.added(frame))
+        case .updated:
+            frames.apply(.updated(frame))
         }
         latestJointFrame = frame
-
-        let wrist = skeleton.joint(.wrist)
-        let indexTip = skeleton.joint(.indexFingerTip)
-        let thumbTip = skeleton.joint(.thumbTip)
-        guard wrist.isTracked, indexTip.isTracked, thumbTip.isTracked else {
-            latestObservation = .untracked(at: timestamp)
-            return
-        }
-
-        let wristWorld = MovementMath.worldTransform(
-            anchor: anchor.originFromAnchorTransform,
-            joint: wrist.anchorFromJointTransform
-        )
-        let indexWorld = MovementMath.worldTransform(
-            anchor: anchor.originFromAnchorTransform,
-            joint: indexTip.anchorFromJointTransform
-        )
-        let thumbWorld = MovementMath.worldTransform(
-            anchor: anchor.originFromAnchorTransform,
-            joint: thumbTip.anchorFromJointTransform
-        )
-        let distance = simd_distance(indexWorld.translation, thumbWorld.translation)
-        let closure = min(max(1 - distance / 0.09, 0), 1)
-        let forward = SIMD3<Float>(wristWorld.columns.2.x, wristWorld.columns.2.y, wristWorld.columns.2.z)
-        let pitch = atan2(forward.y, max(0.0001, abs(forward.z)))
-        let roll = atan2(forward.x, max(0.0001, abs(forward.z)))
-        let digits = digitKinematics(from: skeleton, anchorTransform: anchor.originFromAnchorTransform)
-
-        latestObservation = MovementObservation(
-            timestamp: timestamp,
-            isTracked: true,
-            wristPitch: pitch,
-            wristRoll: roll,
-            closure: closure,
-            thumbToIndexDistance: distance,
-            quality: digits.count == HandDigit.allCases.count ? .good : .low,
-            digits: digits
-        )
+        latestObservation = MovementObservation(acceptedJointFrame: frame)
     }
 
-    private func digitKinematics(from skeleton: HandSkeleton, anchorTransform: simd_float4x4) -> [HandDigit: MovementObservation.DigitKinematics] {
-        let names: [HandDigit: [HandSkeleton.JointName]] = [
-            .thumb: [.thumbKnuckle, .thumbIntermediateBase, .thumbIntermediateTip, .thumbTip],
-            .index: [.indexFingerMetacarpal, .indexFingerKnuckle, .indexFingerIntermediateBase, .indexFingerIntermediateTip, .indexFingerTip],
-            .middle: [.middleFingerMetacarpal, .middleFingerKnuckle, .middleFingerIntermediateBase, .middleFingerIntermediateTip, .middleFingerTip],
-            .ring: [.ringFingerMetacarpal, .ringFingerKnuckle, .ringFingerIntermediateBase, .ringFingerIntermediateTip, .ringFingerTip],
-            .little: [.littleFingerMetacarpal, .littleFingerKnuckle, .littleFingerIntermediateBase, .littleFingerIntermediateTip, .littleFingerTip]
-        ]
-        let littleTip = skeleton.joint(.littleFingerTip)
-        let littlePosition = littleTip.isTracked ? worldPosition(littleTip, anchorTransform: anchorTransform) : nil
-        return Dictionary(uniqueKeysWithValues: names.compactMap { digit, jointNames in
-            let joints = jointNames.map { skeleton.joint($0) }
-            guard joints.allSatisfy(\.isTracked) else { return nil }
-            let points = joints.map { worldPosition($0, anchorTransform: anchorTransform) }
-            let angles: [Float]
-            if digit == .thumb {
-                angles = [jointAngle(points[0], points[1], points[2]), jointAngle(points[1], points[2], points[3]), 0]
-            } else {
-                angles = [jointAngle(points[0], points[1], points[2]), jointAngle(points[1], points[2], points[3]), jointAngle(points[2], points[3], points[4])]
+    private func publishMostRecentFrame(
+        removing hand: AffectedHand,
+        at timestamp: TimeInterval
+    ) {
+        let unaffected: AffectedHand = hand == .left ? .right : .left
+        latestJointFrame = frames.frame(for: unaffected)
+        latestObservation = latestJointFrame.map(MovementObservation.init(acceptedJointFrame:))
+            ?? .untracked(at: timestamp)
+    }
+
+    private func consume(_ event: ARKitSession.Event, generation: Int) {
+        guard activeGeneration == generation else { return }
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        switch event {
+        case let .authorizationChanged(_, status):
+            if status == .denied {
+                eventHandler?(.authorizationDenied, timestamp)
             }
-            let opposition = digit == .thumb && littlePosition != nil ? simd_distance(points.last!, littlePosition!) : nil
-            return (digit, MovementObservation.DigitKinematics(mcpAngle: angles[0], pipAngle: angles[1], dipAngle: angles[2], oppositionDistance: opposition, isTracked: true))
-        })
+        case let .dataProviderStateChanged(_, newState, error):
+            switch newState {
+            case .paused:
+                eventHandler?(.interrupted, timestamp)
+            case .stopped:
+                eventHandler?(
+                    .providerFailed(error?.localizedDescription ?? "ARKit data provider stopped"),
+                    timestamp
+                )
+            case .initialized, .running:
+                break
+            @unknown default:
+                eventHandler?(.interrupted, timestamp)
+            }
+        @unknown default:
+            break
+        }
     }
 
-    private func worldPosition(_ joint: HandSkeleton.Joint, anchorTransform: simd_float4x4) -> SIMD3<Float> {
-        MovementMath.worldTransform(anchor: anchorTransform, joint: joint.anchorFromJointTransform).translation
+    private func invalidate(
+        _ generation: Int,
+        stopUnderlyingSession: Bool
+    ) {
+        guard generation == startupGeneration else { return }
+        startupGeneration += 1
+        activeGeneration = nil
+        isRunning = false
+        updateTask?.cancel()
+        updateTask = nil
+        eventTask?.cancel()
+        eventTask = nil
+        if stopUnderlyingSession {
+            stopSession()
+        }
+        clearPublishedFrames(at: ProcessInfo.processInfo.systemUptime)
     }
 
-    private func jointAngle(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) -> Float {
-        MovementMath.angle(between: a - b, and: c - b) * 180 / .pi
+    private func clearPublishedFrames(at timestamp: TimeInterval) {
+        frames.removeAll()
+        latestJointFrame = nil
+        latestObservation = .untracked(at: timestamp)
+    }
+
+    private func affectedHand(
+        for chirality: HandAnchor.Chirality
+    ) -> AffectedHand? {
+        switch chirality {
+        case .left:
+            .left
+        case .right:
+            .right
+        @unknown default:
+            nil
+        }
     }
 }
 

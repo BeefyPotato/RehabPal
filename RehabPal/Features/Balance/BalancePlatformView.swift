@@ -19,6 +19,7 @@ struct BalancePlatformView: View {
     @State private var subscriptions = BalanceSubscriptionHolder()
     @State private var ballActive = false
     @State private var respawnCountdown: TimeInterval = 0
+    @State private var recalibrationGeneration: Int?
 
     private let trayPosition = SIMD3<Float>(0, 0.9, -1)
     private let trayRadius: Float = 0.12
@@ -103,6 +104,10 @@ struct BalancePlatformView: View {
     }
 
     private func gameStep(_ deltaTime: TimeInterval) {
+        coordinator.updateRequiredJoints(WristNeutralCalibration.requiredJoints)
+        if processRecalibrationIfNeeded() {
+            return
+        }
         guard case let .active(request, _, _) = coordinator.phase,
               request.experience == .exercise(.balance) else {
             let requiresRecalibration: Bool
@@ -133,6 +138,41 @@ struct BalancePlatformView: View {
             ballPosition: planarPosition,
             ballEscaped: escaped
         ))
+    }
+
+    private func processRecalibrationIfNeeded() -> Bool {
+        if let generation = coordinator.pendingProcessorResetGeneration,
+           recalibrationGeneration != generation {
+            game.pause(requiresRecalibration: true)
+            recalibrationGeneration = generation
+            placeBallAtStart()
+            freezeBall()
+            _ = coordinator.acknowledgeProcessorReset(generation)
+        }
+
+        guard let generation = recalibrationGeneration else { return false }
+        guard case .trackingLost(requiresRecalibration: true) = coordinator.pauseReason else {
+            recalibrationGeneration = nil
+            return false
+        }
+        guard let frame = coordinator.currentFrame else {
+            freezeBall()
+            return true
+        }
+
+        _ = game.process(
+            frame: frame,
+            ballPosition: BalanceTargetSchedule.ballStart,
+            ballEscaped: false
+        )
+        freezeBall()
+        if game.isCalibrated {
+            _ = coordinator.acknowledgeProcessorCalibration(
+                generation: generation,
+                frameTimestamp: frame.timestamp
+            )
+        }
+        return true
     }
 
     private func applyTrackingTiltWithoutScoring() {

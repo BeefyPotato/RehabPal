@@ -29,6 +29,7 @@ struct WristDiagnosticImmersiveView: View {
     @State private var phaseLabel = "Neutral calibration"
     @State private var demoTimestamp: TimeInterval = 0
     @State private var completionDelivery = DiagnosticCompletionDelivery()
+    @State private var recalibrationGeneration: Int?
 
     init(
         request: RehabSessionRequest,
@@ -95,6 +96,7 @@ struct WristDiagnosticImmersiveView: View {
     }
 
     private func processLiveFrame() {
+        coordinator.updateRequiredJoints(WristNeutralCalibration.requiredJoints)
         guard coordinator.activeRequest?.experience == .wristAssessment else {
             processor.pause(requiresRecalibration: false)
             return
@@ -102,18 +104,48 @@ struct WristDiagnosticImmersiveView: View {
         guard !coordinator.isUsingDemoMode else {
             return
         }
+        if processRecalibrationIfNeeded() {
+            return
+        }
         for observation in coordinator.consumeDiagnosticObservations() {
             handle(processor.process(observation: observation))
         }
         if case .paused = coordinator.phase {
-            let requiresRecalibration: Bool
-            if case .trackingLost(requiresRecalibration: true) = coordinator.pauseReason {
-                requiresRecalibration = true
-            } else {
-                requiresRecalibration = false
-            }
-            processor.pause(requiresRecalibration: requiresRecalibration)
+            processor.pause(requiresRecalibration: false)
         }
+    }
+
+    private func processRecalibrationIfNeeded() -> Bool {
+        if let generation = coordinator.pendingProcessorResetGeneration,
+           recalibrationGeneration != generation {
+            processor.pause(requiresRecalibration: true)
+            recalibrationGeneration = generation
+            _ = coordinator.acknowledgeProcessorReset(generation)
+        }
+
+        guard let generation = recalibrationGeneration else { return false }
+        guard case .trackingLost(requiresRecalibration: true) = coordinator.pauseReason else {
+            recalibrationGeneration = nil
+            return false
+        }
+
+        if !processor.isCalibrated {
+            let observations = coordinator.consumeDiagnosticObservations()
+            for observation in observations {
+                handle(processor.process(observation: observation))
+                if processor.isCalibrated { break }
+            }
+            if observations.isEmpty, let frame = coordinator.currentFrame {
+                handle(processor.process(frame: frame))
+            }
+        }
+        if processor.isCalibrated, let frame = coordinator.currentFrame {
+            _ = coordinator.acknowledgeProcessorCalibration(
+                generation: generation,
+                frameTimestamp: frame.timestamp
+            )
+        }
+        return true
     }
 
     private func handle(_ event: WristDiagnosticEvent) {
@@ -200,6 +232,7 @@ struct FingerDiagnosticImmersiveView: View {
     @State private var phaseLabel: String
     @State private var demoTimestamp: TimeInterval = 0
     @State private var completionDelivery = DiagnosticCompletionDelivery()
+    @State private var recalibrationGeneration: Int?
 
     init(
         request: RehabSessionRequest,
@@ -265,11 +298,19 @@ struct FingerDiagnosticImmersiveView: View {
     }
 
     private func processLiveFrame() {
+        if let digit = processor.currentDigit {
+            coordinator.updateRequiredJoints(Set(
+                FingerROMMetrics.requiredJoints(for: digit)
+            ))
+        }
         guard coordinator.activeRequest?.experience == .handAssessment else {
             processor.pause()
             return
         }
         guard !coordinator.isUsingDemoMode else {
+            return
+        }
+        if processRecalibrationIfNeeded() {
             return
         }
         for observation in coordinator.consumeDiagnosticObservations() {
@@ -278,6 +319,39 @@ struct FingerDiagnosticImmersiveView: View {
         if case .paused = coordinator.phase {
             processor.pause()
         }
+    }
+
+    private func processRecalibrationIfNeeded() -> Bool {
+        if let generation = coordinator.pendingProcessorResetGeneration,
+           recalibrationGeneration != generation {
+            processor.pause()
+            recalibrationGeneration = generation
+            _ = coordinator.acknowledgeProcessorReset(generation)
+        }
+
+        guard let generation = recalibrationGeneration else { return false }
+        guard case .trackingLost(requiresRecalibration: true) = coordinator.pauseReason else {
+            recalibrationGeneration = nil
+            return false
+        }
+
+        if !processor.isCalibrated {
+            let observations = coordinator.consumeDiagnosticObservations()
+            for observation in observations {
+                handle(processor.process(observation: observation))
+                if processor.isCalibrated { break }
+            }
+            if observations.isEmpty, let frame = coordinator.currentFrame {
+                handle(processor.process(frame: frame))
+            }
+        }
+        if processor.isCalibrated, let frame = coordinator.currentFrame {
+            _ = coordinator.acknowledgeProcessorCalibration(
+                generation: generation,
+                frameTimestamp: frame.timestamp
+            )
+        }
+        return true
     }
 
     private func handle(_ event: FingerDiagnosticEvent) {

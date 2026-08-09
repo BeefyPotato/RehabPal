@@ -34,6 +34,7 @@ struct SqueezeBuddyView: View {
     @State private var mouth = ModelEntity()
     @State private var subscriptions = SqueezeSubscriptionHolder()
     @State private var demoTimestamp: TimeInterval = 0
+    @State private var recalibrationGeneration: Int?
 
     init(
         request: RehabSessionRequest,
@@ -99,6 +100,10 @@ struct SqueezeBuddyView: View {
     }
 
     private func gameStep() {
+        coordinator.updateRequiredJoints(SqueezeHandMetrics.requiredJoints)
+        if processRecalibrationIfNeeded() {
+            return
+        }
         guard case let .active(request, _, _) = coordinator.phase,
               request.experience == .exercise(.squeeze) else {
             let requiresRecalibration: Bool
@@ -113,6 +118,42 @@ struct SqueezeBuddyView: View {
         }
         guard !coordinator.isUsingDemoMode else { return }
         handle(game.process(frame: coordinator.currentFrame))
+    }
+
+    private func processRecalibrationIfNeeded() -> Bool {
+        if let generation = coordinator.pendingProcessorResetGeneration,
+           recalibrationGeneration != generation {
+            game.pause(requiresRecalibration: true)
+            recalibrationGeneration = generation
+            faceRoot.isEnabled = false
+            _ = coordinator.acknowledgeProcessorReset(generation)
+        }
+
+        guard let generation = recalibrationGeneration else { return false }
+        guard case .trackingLost(requiresRecalibration: true) = coordinator.pauseReason else {
+            recalibrationGeneration = nil
+            return false
+        }
+        guard !game.isCalibrated, let frame = coordinator.currentFrame else {
+            faceRoot.isEnabled = false
+            if let frame = coordinator.currentFrame, game.isCalibrated {
+                _ = coordinator.acknowledgeProcessorCalibration(
+                    generation: generation,
+                    frameTimestamp: frame.timestamp
+                )
+            }
+            return true
+        }
+
+        _ = game.process(frame: frame)
+        faceRoot.isEnabled = false
+        if game.isCalibrated {
+            _ = coordinator.acknowledgeProcessorCalibration(
+                generation: generation,
+                frameTimestamp: frame.timestamp
+            )
+        }
+        return true
     }
 
     private func handle(_ event: SqueezeEvent) {

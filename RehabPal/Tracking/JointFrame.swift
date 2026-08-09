@@ -158,6 +158,36 @@ struct HandJointFrameObservation: Sendable {
     let frame: HandJointFrame?
 }
 
+/// App-owned projection of ARKit's added/updated/removed hand-anchor stream.
+/// Each chirality has an independent slot so an interleaved update or removal
+/// from one hand can never erase the other hand's latest frame.
+enum HandJointFrameUpdate: Sendable {
+    case added(HandJointFrame)
+    case updated(HandJointFrame)
+    case removed(hand: AffectedHand, timestamp: TimeInterval)
+}
+
+struct HandJointFrameDemultiplexer: Sendable {
+    private var frames: [AffectedHand: HandJointFrame] = [:]
+
+    mutating func apply(_ update: HandJointFrameUpdate) {
+        switch update {
+        case let .added(frame), let .updated(frame):
+            frames[frame.hand] = frame
+        case let .removed(hand, _):
+            frames[hand] = nil
+        }
+    }
+
+    func frame(for hand: AffectedHand) -> HandJointFrame? {
+        frames[hand]
+    }
+
+    mutating func removeAll() {
+        frames.removeAll(keepingCapacity: true)
+    }
+}
+
 /// Captures the tracked wrist orientation only when the wrist and all four
 /// level knuckles are present, preventing a partial hand from becoming neutral.
 struct WristNeutralCalibration: Sendable {

@@ -29,14 +29,20 @@ struct AfterCareReportView: View {
             (session.date, metric == .wrist ? Double(session.wristScore) : session.digitExcursions[digit, default: 0], false)
         }
         if let assessment = state.assessmentResult {
-            let today = metric == .wrist
-                ? Double(assessment.wristControlScore)
-                : assessment.handROM[digit]?.totalExcursion
+            let today = assessment.todayTrendValue(
+                for: metric == .wrist ? .wrist : .finger(digit)
+            )
             if let today {
                 points.append((.now, today, true))
             }
         }
         return points
+    }
+
+    private var todayChartValue: Double? {
+        state.assessmentResult?.todayTrendValue(
+            for: metric == .wrist ? .wrist : .finger(digit)
+        )
     }
 
     var body: some View {
@@ -68,7 +74,9 @@ struct AfterCareReportView: View {
                     }
                     .chartYScale(domain: 0...max(120, (chartPoints.map(\.1).max() ?? 100) + 10))
                     .frame(height: 240)
-                    Text("The orange point is today. Earlier points are fixed demo history.")
+                    Text(todayChartValue == nil
+                         ? "Today is unavailable for this measure. Earlier points are fixed demo history."
+                         : "The orange point is today. Earlier points are fixed demo history.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 reportCard("Today compared") {
@@ -76,9 +84,10 @@ struct AfterCareReportView: View {
                         metricRow("Baseline", report.assessment.baselineWristControl)
                         metricRow("Previous", report.assessment.previousWristControl)
                         metricRow("Today", report.assessment.currentWristControl)
-                    } else if let summary = state.assessmentResult?.handROM[digit] {
-                        metricRow("Total joint excursion", summary.isAvailable ? Int(summary.totalExcursion) : nil, suffix: "°")
-                        metricRow("Consistency", summary.isAvailable ? Int(summary.consistency) : nil, suffix: "%")
+                    } else if let assessment = state.assessmentResult {
+                        let summary = assessment.availableFingerROM(for: digit)
+                        metricRow("Total joint excursion", summary.map { Int($0.totalExcursion) }, suffix: "°")
+                        metricRow("Consistency", summary.map { Int($0.consistency) }, suffix: "%")
                     }
                     Text(report.assessment.trackingNote).foregroundStyle(.secondary)
                 }

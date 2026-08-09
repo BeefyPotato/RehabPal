@@ -524,6 +524,7 @@ struct FingerROMDiagnosticProcessor: Sendable {
     }
 
     var isComplete: Bool { completedAttempts == digitSequence.count }
+    var isCalibrated: Bool { extensionBaseline != nil }
     var currentDigit: HandDigit? {
         guard !isComplete else { return nil }
         return digitSequence[completedAttempts]

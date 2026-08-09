@@ -1,6 +1,6 @@
 import Foundation
 
-enum AffectedHand: String, Equatable, Sendable {
+enum AffectedHand: String, Equatable, Hashable, Sendable {
     case left
     case right
 }

@@ -27,6 +27,68 @@ final class JointFrameTests: XCTestCase {
         XCTAssertFalse(leftFrame.isForAffectedHand(.right))
     }
 
+    // Break caught: a single latest-frame slot lets an interleaved update from
+    // the unaffected hand overwrite the prescribed hand's usable frame.
+    func testHandFrameDemultiplexerKeepsIndependentInterleavedHands() {
+        var demultiplexer = HandJointFrameDemultiplexer()
+        let left = HandJointFrame.synthetic(
+            hand: .left,
+            timestamp: 1,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )
+        let right = HandJointFrame.synthetic(
+            hand: .right,
+            timestamp: 2,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )
+
+        demultiplexer.apply(.added(left))
+        demultiplexer.apply(.updated(right))
+
+        XCTAssertEqual(demultiplexer.frame(for: .left)?.timestamp, 1)
+        XCTAssertEqual(demultiplexer.frame(for: .right)?.timestamp, 2)
+    }
+
+    // Break caught: an ARKit removal for the unaffected hand can erase the
+    // affected frame, or a removal can retain a stale frame for that same hand.
+    func testHandFrameDemultiplexerRemovalAffectsOnlyItsHand() {
+        var demultiplexer = HandJointFrameDemultiplexer()
+        let left = HandJointFrame.synthetic(
+            hand: .left,
+            timestamp: 10,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )
+        let right = HandJointFrame.synthetic(
+            hand: .right,
+            timestamp: 11,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )
+        demultiplexer.apply(.added(left))
+        demultiplexer.apply(.added(right))
+
+        demultiplexer.apply(.removed(hand: .left, timestamp: 12))
+        XCTAssertNil(demultiplexer.frame(for: .left))
+        XCTAssertEqual(demultiplexer.frame(for: .right)?.timestamp, 11)
+
+        demultiplexer.apply(.removed(hand: .right, timestamp: 13))
+        XCTAssertNil(demultiplexer.frame(for: .right))
+    }
+
+    // Break caught: substituting render uptime for ARKit's update timestamp
+    // defeats stale-frame detection and continuity checks downstream.
+    func testHandFrameDemultiplexerPreservesUpdateTimestamp() {
+        var demultiplexer = HandJointFrameDemultiplexer()
+        let frame = HandJointFrame.synthetic(
+            hand: .right,
+            timestamp: 42.125,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )
+
+        demultiplexer.apply(.updated(frame))
+
+        XCTAssertEqual(demultiplexer.frame(for: .right)?.timestamp, 42.125)
+    }
+
     // Break caught: reporting good confidence when a required joint is absent or untracked would let processors act on incomplete data.
     func testFrameConfidenceRequiresEveryRequestedTrackedJoint() {
         let frame = HandJointFrame.synthetic(

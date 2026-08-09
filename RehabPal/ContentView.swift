@@ -89,13 +89,16 @@ struct ContentView: View {
             await monitorJointFrames()
         }
         .onChange(of: session.phase) { _, phase in
-            guard case let .completed(outcome) = phase,
-                  state.route(outcome) else {
-                return
+            if case let .completed(outcome) = phase,
+               state.route(outcome) {
+                if case .exercise = outcome.request.experience {
+                    selectedExercise = nil
+                    squeezeStarted = false
+                }
             }
-            if case .exercise = outcome.request.experience {
-                selectedExercise = nil
-                squeezeStarted = false
+            if case .failed = phase {
+                state.cancelActiveSession()
+                Task { await dismissImmersiveAfterFailure() }
             }
         }
         .onDisappear {
@@ -152,6 +155,12 @@ struct ContentView: View {
                         _ = session.confirmRecalibration()
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(!session.canConfirmRecalibration)
+                    if !session.canConfirmRecalibration {
+                        Text("Hold the prompted pose until recalibration is ready.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     Text("Keep your prescribed hand in view to continue.")
                         .foregroundStyle(.secondary)
@@ -185,56 +194,74 @@ struct ContentView: View {
         if session.activeRequest != request {
             await closeImmersiveSession()
         }
-        await session.startLive(request)
-        await authorizeAndPresent()
+        let launched = await RehabSessionLaunchSequence.startLive(
+            request: request,
+            coordinator: session,
+            lifecycle: immersiveLifecycle,
+            open: openRehabImmersiveSpace,
+            dismiss: dismissImmersiveSpace.callAsFunction
+        )
+        guard launched, activateAuthorizedSession() else {
+            if launched {
+                await closeImmersiveSession()
+            }
+            return
+        }
     }
 
     private func retryLive() async {
-        await session.retryLive()
-        await authorizeAndPresent()
+        guard case let .failed(failure) = session.phase else { return }
+        let launched = await RehabSessionLaunchSequence.startLive(
+            request: failure.request,
+            coordinator: session,
+            lifecycle: immersiveLifecycle,
+            open: openRehabImmersiveSpace,
+            dismiss: dismissImmersiveSpace.callAsFunction
+        )
+        guard launched, activateAuthorizedSession() else {
+            if launched {
+                await closeImmersiveSession()
+            }
+            return
+        }
     }
 
     private func enterDemoMode() async {
-        guard session.startDemoMode() else { return }
-        await authorizeAndPresent()
+        let launched = await RehabSessionLaunchSequence.startDemo(
+            coordinator: session,
+            lifecycle: immersiveLifecycle,
+            open: openRehabImmersiveSpace,
+            dismiss: dismissImmersiveSpace.callAsFunction
+        )
+        guard launched, activateAuthorizedSession() else {
+            if launched {
+                await closeImmersiveSession()
+            }
+            return
+        }
     }
 
-    private func authorizeAndPresent() async {
+    private func activateAuthorizedSession() -> Bool {
         guard let authorization = session.authorization,
               state.activateSession(
                   authorization.request,
                   provenance: authorization.provenance
               ) else {
-            return
+            return false
         }
-        await presentImmersiveSpace()
+        return true
     }
 
-    private func presentImmersiveSpace() async {
-        guard let attempt = immersiveLifecycle.beginOpening() else { return }
+    private func openRehabImmersiveSpace() async -> RehabImmersiveOpenResult {
         switch await openImmersiveSpace(id: RehabSessionCoordinator.immersiveSpaceID) {
         case .opened:
-            switch immersiveLifecycle.completeOpening(attempt) {
-            case .accepted:
-                break
-            case .dismissStaleOpen:
-                await dismissImmersiveSpace()
-            }
+            return .opened
         case .userCancelled:
-            if immersiveLifecycle.failOpening(attempt) {
-                state.cancelActiveSession()
-                session.failImmersiveSpace("Opening the immersive session was cancelled.")
-            }
+            return .userCancelled
         case .error:
-            if immersiveLifecycle.failOpening(attempt) {
-                state.cancelActiveSession()
-                session.failImmersiveSpace("The immersive session could not be opened.")
-            }
+            return .failed("The immersive session could not be opened.")
         @unknown default:
-            if immersiveLifecycle.failOpening(attempt) {
-                state.cancelActiveSession()
-                session.failImmersiveSpace("The immersive session could not be opened.")
-            }
+            return .failed("The immersive session could not be opened.")
         }
     }
 
@@ -249,13 +276,15 @@ struct ContentView: View {
     private func monitorJointFrames() async {
         while !Task.isCancelled, session.shouldMonitorFrames {
             if session.provenance == .live || session.pauseReason != nil {
-                session.receiveJointFrame(
-                    handTracking.latestJointFrame,
-                    at: ProcessInfo.processInfo.systemUptime
-                )
+                session.pollLiveTracking(at: ProcessInfo.processInfo.systemUptime)
             }
             try? await Task.sleep(for: .milliseconds(50))
         }
+    }
+
+    private func dismissImmersiveAfterFailure() async {
+        guard immersiveLifecycle.close() else { return }
+        await dismissImmersiveSpace()
     }
 
     private func cancelCurrentExperience() {
@@ -280,7 +309,11 @@ struct ContentView: View {
             "The prescribed goal is invalid."
         case .liveTrackingUnavailable:
             "Hand tracking is unavailable on this device."
-        case let .liveStartupFailed(message), let .immersiveSpaceFailed(message):
+        case .liveAuthorizationDenied:
+            "Hand-tracking authorization was denied."
+        case let .liveProviderFailed(message),
+             let .liveStartupFailed(message),
+             let .immersiveSpaceFailed(message):
             message
         }
     }

@@ -45,7 +45,19 @@ struct AfterCareReport: Equatable, Sendable {
         reviewThreshold: Int,
         sessionProvenance: [RehabExperience: SessionProvenance]
     ) -> AfterCareReport {
-        let confident = assessment.trackingConfidence >= 0.6
+        let currentWristControl = assessment.availableWristControlScore
+        let currentClosureConsistency = assessment.availableClosureConsistencyScore
+        let trackingNote: String
+        switch (currentWristControl, currentClosureConsistency) {
+        case (.some, .some):
+            trackingNote = "Tracking confidence was sufficient for available comparisons"
+        case (.some, .none):
+            trackingNote = "Wrist comparison available; finger comparison unavailable"
+        case (.none, .some):
+            trackingNote = "Wrist comparison unavailable; available fingers are shown"
+        case (.none, .none):
+            trackingNote = "Low tracking confidence—comparison unavailable"
+        }
         let resultOrder: [(RehabExperience, String)] = [
             (.exercise(.balance), ExerciseKind.balance.title),
             (.exercise(.squeeze), ExerciseKind.squeeze.title),
@@ -56,13 +68,11 @@ struct AfterCareReport: Equatable, Sendable {
             assessment: AssessmentSection(
                 baselineWristControl: history.baselineWristControl,
                 previousWristControl: history.previousWristControl,
-                currentWristControl: confident ? assessment.wristControlScore : nil,
+                currentWristControl: currentWristControl,
                 baselineClosureConsistency: history.baselineClosureConsistency,
                 previousClosureConsistency: history.previousClosureConsistency,
-                currentClosureConsistency: confident ? assessment.closureConsistencyScore : nil,
-                trackingNote: confident
-                    ? "Tracking confidence was sufficient for comparison"
-                    : "Low tracking confidence—comparison unavailable"
+                currentClosureConsistency: currentClosureConsistency,
+                trackingNote: trackingNote
             ),
             gameplay: GameplaySection(
                 completedExercises: gameplay.filter { $0.completedDose >= $0.prescribedDose }.count,

@@ -97,6 +97,83 @@ final class AssessmentReportTests: XCTestCase {
         XCTAssertEqual(report.assessment.trackingNote, "Low tracking confidence—comparison unavailable")
     }
 
+    // Break caught: averaging wrist and finger confidence can hide a confident
+    // wrist because unrelated fingers are weak, or expose unavailable fingers
+    // because the wrist is strong.
+    @MainActor
+    func testReportGatesWristAndEachFingerByTheirOwnConfidence() {
+        let availableIndex = DigitROMSummary(
+            digit: .index,
+            totalExcursion: 84,
+            maximumFlexion: 75,
+            maximumExtension: 5,
+            consistency: 88,
+            trackingConfidence: 0.9,
+            attemptCount: 2
+        )
+        let unavailableRing = DigitROMSummary(
+            digit: .ring,
+            totalExcursion: 120,
+            maximumFlexion: 100,
+            maximumExtension: 0,
+            consistency: 99,
+            trackingConfidence: 0.3,
+            attemptCount: 2
+        )
+        let assessment = AssessmentResult(
+            wrist: .init(controlScore: 91, trackingConfidence: 0.95),
+            handROM: [.index: availableIndex, .ring: unavailableRing]
+        )
+
+        let report = AfterCareReport.make(
+            history: .fixture,
+            assessment: assessment,
+            gameplay: [],
+            symptoms: .comfortable,
+            reviewThreshold: 6,
+            sessionProvenance: [:]
+        )
+
+        XCTAssertEqual(report.assessment.currentWristControl, 91)
+        XCTAssertEqual(report.assessment.currentClosureConsistency, 88)
+        XCTAssertEqual(assessment.todayTrendValue(for: .wrist), 91)
+        XCTAssertEqual(assessment.todayTrendValue(for: .finger(.index)), 84)
+        XCTAssertNil(assessment.todayTrendValue(for: .finger(.ring)))
+    }
+
+    // Break caught: strong fingers can make a low-confidence wrist appear as
+    // today's orange chart point even though the wrist result is unavailable.
+    @MainActor
+    func testReportOmitsUnavailableWristTodayPointWithoutHidingAvailableFinger() {
+        let availableMiddle = DigitROMSummary(
+            digit: .middle,
+            totalExcursion: 78,
+            maximumFlexion: 70,
+            maximumExtension: 4,
+            consistency: 82,
+            trackingConfidence: 0.85,
+            attemptCount: 2
+        )
+        let assessment = AssessmentResult(
+            wrist: .init(controlScore: 99, trackingConfidence: 0.2),
+            handROM: [.middle: availableMiddle]
+        )
+
+        let report = AfterCareReport.make(
+            history: .fixture,
+            assessment: assessment,
+            gameplay: [],
+            symptoms: .comfortable,
+            reviewThreshold: 6,
+            sessionProvenance: [:]
+        )
+
+        XCTAssertNil(report.assessment.currentWristControl)
+        XCTAssertEqual(report.assessment.currentClosureConsistency, 82)
+        XCTAssertNil(assessment.todayTrendValue(for: .wrist))
+        XCTAssertEqual(assessment.todayTrendValue(for: .finger(.middle)), 78)
+    }
+
     // Break caught: Demo Mode outcomes can reach the report as ordinary measured
     // results after their session wrappers are aggregated.
     @MainActor
