@@ -1,0 +1,27 @@
+Sheep
+=====
+
+Model title: Sheep
+Creator: Quaternius
+Canonical source: https://poly.pizza/m/rgJXF570ZK
+Published asset URL: https://static.poly.pizza/d42145b6-ae20-48cd-ba36-63b03f901c32.glb
+License: CC0 1.0 Universal (Public Domain)
+License URL: https://creativecommons.org/publicdomain/zero/1.0/
+
+Original source file: Sheep.glb
+Original SHA-256: 0b259e1a5dbf4463901667e11529f229193a6f3869cecf30508f8cb5bbe3131f
+Converted runtime file: Sheep.usdz
+Converted SHA-256: 08396da7f8d95febacf3f12aa757465a23262cc8eb284b5650df19068d10edf4
+Download date: 2026-08-10
+
+Conversion tool: Blender 5.2.0 LTS (hash fbe6228777e7, built 2026-07-14 01:31:22)
+Successful conversion command:
+env TMPDIR=/private/tmp/rehabpal-sheep-xcode /Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python-expr 'import bpy; bpy.ops.import_scene.gltf(filepath="RehabPal/Resources/Sheep/Sheep.glb"); result = bpy.ops.wm.usd_export(filepath="RehabPal/Resources/Sheep/Sheep.usdz", export_animation=True, export_materials=True, export_textures_mode="NEW", usdz_downscale_size="KEEP", convert_scene_units="METERS", meters_per_unit=1.0); print(result)'
+
+Conversion settings: animations and materials enabled; the GLB's embedded texture was exported unchanged into the USDZ package (no texture downscaling). The first preserve-mode export was rejected because it did not package the embedded texture; the recorded successful command uses NEW solely to package that source texture.
+Runtime scale/orientation adjustment: none at import time. Any visible hierarchy adjustment is owned by the Sheep Drop runtime view.
+
+Validation:
+- /usr/bin/usdzip -l - RehabPal/Resources/Sheep/Sheep.usdz
+- /usr/bin/usdchecker --arkit RehabPal/Resources/Sheep/Sheep.usdz (Success)
+- /usr/bin/usdcat --loadOnly RehabPal/Resources/Sheep/Sheep.usdz (OK)

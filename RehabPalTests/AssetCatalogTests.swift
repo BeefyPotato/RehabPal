@@ -1,4 +1,5 @@
 import RealityKitContent
+import RealityKit
 import XCTest
 
 final class AssetCatalogTests: XCTestCase {
@@ -36,5 +37,30 @@ final class AssetCatalogTests: XCTestCase {
         for name in ["balance", "squeeze", "wristAssessment", "fingerROM"] {
             XCTAssertNotNil(Bundle.main.url(forResource: name, withExtension: "mp4"), "Missing \(name).mp4")
         }
+    }
+
+    func testCC0SheepAssetAndProvenanceAreBundled() throws {
+        let sheepURL = try XCTUnwrap(
+            Bundle.main.url(forResource: "Sheep", withExtension: "usdz"),
+            "Missing Sheep.usdz from the application bundle"
+        )
+        let attributionURL = try XCTUnwrap(
+            Bundle.main.url(
+                forResource: "LICENSE-AND-ATTRIBUTION",
+                withExtension: "txt"
+            ),
+            "Missing LICENSE-AND-ATTRIBUTION.txt from the application bundle"
+        )
+
+        XCTAssertFalse(try Data(contentsOf: sheepURL).isEmpty)
+        let attribution = try String(contentsOf: attributionURL, encoding: .utf8)
+        XCTAssertTrue(attribution.contains("https://poly.pizza/m/rgJXF570ZK"))
+        XCTAssertTrue(attribution.contains("CC0 1.0"))
+    }
+
+    @MainActor
+    func testCC0SheepUSDZCanLoadFromApplicationBundle() async throws {
+        let sheep = try await Entity(named: "Sheep", in: .main)
+        XCTAssertFalse(sheep.children.isEmpty)
     }
 }
