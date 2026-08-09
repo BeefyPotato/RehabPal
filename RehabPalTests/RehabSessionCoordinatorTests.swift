@@ -19,6 +19,15 @@ final class RehabSessionCoordinatorTests: XCTestCase {
     }
 
     @MainActor
+    func testCoordinatorPublishesTheCurrentViewerPositionFromLiveTracking() {
+        let live = TestLiveJointSource()
+        live.viewerPosition = SIMD3<Float>(0.2, 1.3, -0.1)
+        let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
+
+        XCTAssertEqual(coordinator.currentViewerPosition, SIMD3<Float>(0.2, 1.3, -0.1))
+    }
+
+    @MainActor
     func testCoordinatorRejectsARequestForAnyHandOtherThanThePrescription() async {
         let live = TestLiveJointSource()
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
@@ -341,6 +350,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
 private final class TestLiveJointSource: LiveHandJointSession {
     var isSupported = true
     var latestJointFrame: HandJointFrame?
+    var viewerPosition: SIMD3<Float>?
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private var startResults: [Result<Void, Error>]

@@ -7,13 +7,25 @@ import simd
 final class HandTrackingEngine: MovementObservationSource {
     private let session = ARKitSession()
     private let provider = HandTrackingProvider()
+    private let worldTracking = WorldTrackingProvider()
     private var updateTask: Task<Void, Never>?
     private(set) var latestObservation = MovementObservation.untracked(at: 0)
     private(set) var latestJointFrame: HandJointFrame?
     private(set) var lastError: String?
     let isFallback = false
 
-    var isSupported: Bool { HandTrackingProvider.isSupported }
+    var isSupported: Bool {
+        HandTrackingProvider.isSupported && WorldTrackingProvider.isSupported
+    }
+
+    var viewerPosition: SIMD3<Float>? {
+        guard let anchor = worldTracking.queryDeviceAnchor(
+            atTimestamp: ProcessInfo.processInfo.systemUptime
+        ), anchor.isTracked else {
+            return nil
+        }
+        return anchor.originFromAnchorTransform.translation
+    }
 
     func start() async throws {
         guard isSupported else {
@@ -22,7 +34,7 @@ final class HandTrackingEngine: MovementObservationSource {
             throw HandTrackingSessionError.unavailable(message)
         }
         do {
-            try await session.run([provider])
+            try await session.run([provider, worldTracking])
             lastError = nil
             updateTask?.cancel()
             updateTask = Task { [weak self] in

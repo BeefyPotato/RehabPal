@@ -165,6 +165,135 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertTrue(session.isComplete)
     }
 
+    // Break caught: the non-prescribed hand can authorize the grasp and drive a prescribed repetition.
+    func testSqueezeUsesOnlyTheAffectedHandAndShowsFaceAfterStableGraspGate() {
+        var session = SqueezeSession(
+            affectedHand: .right,
+            goal: 1,
+            closeThreshold: 0.7,
+            reopenThreshold: 0.3,
+            holdSeconds: 0.5
+        )
+        let metrics = squeezeMetrics()
+
+        XCTAssertEqual(session.process(sample: .init(hand: .left, timestamp: 0, metrics: metrics)), .waitingForGrasp)
+        XCTAssertEqual(session.process(sample: .init(hand: .left, timestamp: 1, metrics: metrics)), .waitingForGrasp)
+        XCTAssertNil(session.facePose)
+
+        XCTAssertEqual(session.process(sample: .init(hand: .right, timestamp: 2, metrics: metrics)), .stabilizingGrasp)
+        XCTAssertEqual(session.process(sample: .init(hand: .right, timestamp: 2.99, metrics: metrics)), .stabilizingGrasp)
+        guard case .active = session.process(sample: .init(hand: .right, timestamp: 3, metrics: metrics)) else {
+            return XCTFail("Expected accepted grasp to activate squeeze")
+        }
+        XCTAssertNotNil(session.facePose)
+        XCTAssertEqual(session.statusLabel, "Grasp pose detected (not object verified)")
+    }
+
+    // Break caught: threshold crossing can skip hold/reopen phases, double-count, or continue past the exact goal.
+    func testSqueezeCountsCloseHoldReopenPhasesAndStopsAtExactGoal() throws {
+        var session = SqueezeSession(
+            affectedHand: .right,
+            goal: 1,
+            closeThreshold: 0.7,
+            reopenThreshold: 0.3,
+            holdSeconds: 0.5
+        )
+        acceptSqueezeBaseline(in: &session, startingAt: 0)
+
+        XCTAssertEqual(session.process(sample: squeezeSample(at: 1.1, closure: 1)), .active(closure: 1, phase: .closing))
+        XCTAssertEqual(session.process(sample: squeezeSample(at: 1.7, closure: 1)), .active(closure: 1, phase: .held))
+        XCTAssertEqual(session.process(sample: squeezeSample(at: 1.8, closure: 0.5)), .active(closure: 0.5, phase: .reopening))
+        XCTAssertEqual(
+            session.process(sample: squeezeSample(at: 1.9, closure: 0)),
+            .repCompleted(completed: 1, goal: 1, isComplete: true)
+        )
+        XCTAssertEqual(session.progress, SessionProgress(completed: 1, goal: 1, partial: 0))
+        XCTAssertTrue(session.isComplete)
+        XCTAssertEqual(session.process(sample: squeezeSample(at: 2, closure: 1)), .complete)
+        XCTAssertEqual(session.completedRepetitions, 1)
+
+        let result = try XCTUnwrap(session.result)
+        XCTAssertEqual(result.exercise, .squeeze)
+        XCTAssertEqual(result.prescribedDose, 1)
+        XCTAssertEqual(result.completedDose, 1)
+        XCTAssertTrue(result.trackingNote.contains("Measured"))
+        XCTAssertTrue(result.trackingNote.contains("not object verified"))
+    }
+
+    // Break caught: losing required joints can leave the face floating or resume a half-finished repetition.
+    func testSqueezeInterruptionHidesFaceDiscardsPartialRepAndPreservesCompletedReps() {
+        var session = SqueezeSession(
+            affectedHand: .right,
+            goal: 2,
+            closeThreshold: 0.7,
+            reopenThreshold: 0.3,
+            holdSeconds: 0.5
+        )
+        acceptSqueezeBaseline(in: &session, startingAt: 0)
+        _ = session.process(sample: squeezeSample(at: 1.1, closure: 1))
+        _ = session.process(sample: squeezeSample(at: 1.7, closure: 1))
+        _ = session.process(sample: squeezeSample(at: 1.8, closure: 0.5))
+        _ = session.process(sample: squeezeSample(at: 1.9, closure: 0))
+        XCTAssertEqual(session.completedRepetitions, 1)
+
+        _ = session.process(sample: squeezeSample(at: 2, closure: 1))
+        XCTAssertEqual(session.process(frame: nil), .paused)
+        XCTAssertNil(session.facePose)
+        XCTAssertEqual(session.phase, .open)
+        XCTAssertEqual(session.completedRepetitions, 1)
+
+        XCTAssertEqual(session.process(sample: squeezeSample(at: 2.2, closure: 0)), .active(closure: 0, phase: .open))
+        session.pause(requiresRecalibration: true)
+        XCTAssertEqual(session.process(sample: squeezeSample(at: 4.3, closure: 0)), .stabilizingGrasp)
+        XCTAssertNil(session.facePose)
+        XCTAssertEqual(session.completedRepetitions, 1)
+    }
+
+    // Break caught: synthetic button-driven repetitions can claim to be measured joint-tracking outcomes.
+    func testSqueezeDemoCompletionLabelsThePayloadSimulated() throws {
+        var session = SqueezeSession(
+            affectedHand: .right,
+            goal: 1,
+            closeThreshold: 0.7,
+            reopenThreshold: 0.3,
+            holdSeconds: 0.5,
+            isSimulated: true
+        )
+        acceptSqueezeBaseline(in: &session, startingAt: 0)
+        _ = session.process(sample: squeezeSample(at: 1.1, closure: 1))
+        _ = session.process(sample: squeezeSample(at: 1.7, closure: 1))
+        _ = session.process(sample: squeezeSample(at: 1.8, closure: 0.5))
+        _ = session.process(sample: squeezeSample(at: 1.9, closure: 0))
+
+        let result = try XCTUnwrap(session.result)
+        XCTAssertTrue(result.trackingNote.contains("Simulated"))
+        XCTAssertFalse(result.trackingNote.contains("Measured"))
+    }
+
+    private func acceptSqueezeBaseline(in session: inout SqueezeSession, startingAt timestamp: TimeInterval) {
+        XCTAssertEqual(session.process(sample: squeezeSample(at: timestamp, closure: 0)), .stabilizingGrasp)
+        guard case .active = session.process(sample: squeezeSample(at: timestamp + 1, closure: 0)) else {
+            return XCTFail("Expected stable grasp baseline")
+        }
+    }
+
+    private func squeezeSample(at timestamp: TimeInterval, closure: Float) -> SqueezeHandSample {
+        .init(
+            hand: .right,
+            timestamp: timestamp,
+            metrics: squeezeMetrics(closure: closure)
+        )
+    }
+
+    private func squeezeMetrics(closure: Float = 0) -> SqueezeHandMetrics {
+        SqueezeHandMetrics(
+            ballCenter: SIMD3<Float>(0, 0.05, -0.45),
+            radius: 0.04,
+            meanTipToPalmDistance: 0.08 * (1 - 0.5 * closure),
+            meanFingerFlexion: 0.3 + (.pi / 2) * closure
+        )
+    }
+
     private func calibratedFrame(
         hand: AffectedHand,
         wrist: simd_float4x4 = matrix_identity_float4x4,

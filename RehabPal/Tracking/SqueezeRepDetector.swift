@@ -4,6 +4,7 @@ struct SqueezeRepDetector: Sendable {
     enum Phase: String, Equatable, Sendable {
         case open
         case closing
+        case held
         case reopening
     }
 
@@ -14,7 +15,6 @@ struct SqueezeRepDetector: Sendable {
     private(set) var phase: Phase = .open
     private(set) var completedRepetitions = 0
     private var closedSince: TimeInterval?
-    private var trackingLostAt: TimeInterval?
 
     mutating func update(
         closure: Float,
@@ -22,15 +22,8 @@ struct SqueezeRepDetector: Sendable {
         isTracked: Bool
     ) -> Bool {
         guard isTracked else {
-            if trackingLostAt == nil { trackingLostAt = timestamp }
+            resetPartial()
             return false
-        }
-
-        if let trackingLostAt {
-            if let closedSince {
-                self.closedSince = closedSince + max(0, timestamp - trackingLostAt)
-            }
-            self.trackingLostAt = nil
         }
 
         switch phase {
@@ -43,15 +36,31 @@ struct SqueezeRepDetector: Sendable {
                 phase = .open
                 closedSince = nil
             } else if let closedSince, timestamp - closedSince >= holdSeconds {
+                phase = .held
+            }
+        case .held:
+            guard closure < closeThreshold else { return false }
+            if closure <= reopenThreshold {
+                completeRep()
+                return true
+            } else {
                 phase = .reopening
             }
         case .reopening:
             guard closure <= reopenThreshold else { return false }
-            completedRepetitions += 1
-            phase = .open
-            closedSince = nil
+            completeRep()
             return true
         }
         return false
+    }
+
+    mutating func resetPartial() {
+        phase = .open
+        closedSince = nil
+    }
+
+    private mutating func completeRep() {
+        completedRepetitions += 1
+        resetPartial()
     }
 }

@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @State private var state: AppState
     @State private var selectedExercise: ExerciseKind?
+    @State private var squeezeStarted = false
     @State private var handTracking: HandTrackingEngine
     @State private var session: RehabSessionCoordinator
     @State private var immersiveLifecycle = ImmersiveSessionLifecycle()
@@ -35,15 +36,16 @@ struct ContentView: View {
                             exercise: selectedExercise,
                             prescription: state.prescription,
                             useDemoFallback: session.isUsingDemoMode,
-                            liveObservation: session.compatibilityObservation
-                        ) { result in
-                            complete(.gameplay(result))
+                            onBegin: { squeezeStarted = true }
+                        ) {
                             self.selectedExercise = nil
-                        } onCancel: {
-                            self.selectedExercise = nil
+                            squeezeStarted = false
                         }
                     } else {
-                        DailyRoutineView(state: state) { selectedExercise = $0 }
+                        DailyRoutineView(state: state) { exercise in
+                            selectedExercise = exercise
+                            squeezeStarted = exercise != .squeeze
+                        }
                     }
                 case .wristAssessment:
                     WristAssessmentView(
@@ -96,6 +98,7 @@ struct ContentView: View {
             }
             if case .exercise = outcome.request.experience {
                 selectedExercise = nil
+                squeezeStarted = false
             }
         }
         .onDisappear {
@@ -166,6 +169,7 @@ struct ContentView: View {
         switch DemoRouter.screen(for: state) {
         case .routine:
             guard let selectedExercise else { return nil }
+            guard selectedExercise != .squeeze || squeezeStarted else { return nil }
             return RehabSessionRequest(
                 experience: .exercise(selectedExercise),
                 prescription: state.prescription,
@@ -286,6 +290,7 @@ struct ContentView: View {
         switch DemoRouter.screen(for: state) {
         case .routine:
             selectedExercise = nil
+            squeezeStarted = false
         case .wristAssessment, .handAssessment:
             _ = state.cancelSessionAndReturnToRoutine()
         default:

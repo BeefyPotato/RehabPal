@@ -15,6 +15,17 @@ struct SharedRehabImmersiveView: View {
                     onProgress: session.accept,
                     onComplete: finishBalance
                 )
+            } else if let request = session.activeRequest,
+                      request.experience == .exercise(.squeeze) {
+                SqueezeBuddyView(
+                    request: request,
+                    coordinator: session,
+                    closeThreshold: session.squeezeCloseThreshold,
+                    reopenThreshold: session.squeezeReopenThreshold,
+                    holdSeconds: session.squeezeHoldSeconds,
+                    onProgress: session.accept,
+                    onComplete: finishSqueeze
+                )
             } else {
                 RealityView { content in
                     let root = Entity()
@@ -26,6 +37,10 @@ struct SharedRehabImmersiveView: View {
     }
 
     private func finishBalance(_ result: GameplayResult) {
+        _ = session.finish(with: .gameplay(result))
+    }
+
+    private func finishSqueeze(_ result: GameplayResult) {
         _ = session.finish(with: .gameplay(result))
     }
 }

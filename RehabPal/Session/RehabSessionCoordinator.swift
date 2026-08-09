@@ -5,8 +5,13 @@ import Observation
 protocol LiveHandJointSession: AnyObject {
     var isSupported: Bool { get }
     var latestJointFrame: HandJointFrame? { get }
+    var viewerPosition: SIMD3<Float>? { get }
     func start() async throws
     func stop()
+}
+
+extension LiveHandJointSession {
+    var viewerPosition: SIMD3<Float>? { nil }
 }
 
 @MainActor
@@ -15,7 +20,7 @@ final class RehabSessionCoordinator {
     static let immersiveSpaceID = "rehab-session"
     static let recalibrationDelay: TimeInterval = 2
 
-    private let prescribedHand: AffectedHand
+    private let prescription: Prescription
     private let liveTracking: any LiveHandJointSession
     private var demoTracking: SyntheticMovementSource?
     private var trackingLossBeganAt: TimeInterval?
@@ -25,7 +30,7 @@ final class RehabSessionCoordinator {
     private(set) var monitoringGeneration = 0
 
     init(prescription: Prescription, liveTracking: any LiveHandJointSession) {
-        prescribedHand = prescription.affectedHand
+        self.prescription = prescription
         self.liveTracking = liveTracking
     }
 
@@ -83,9 +88,16 @@ final class RehabSessionCoordinator {
     }
 
     var isUsingDemoMode: Bool { provenance == .demo }
+    var squeezeCloseThreshold: Float { prescription.squeezeCloseThreshold }
+    var squeezeReopenThreshold: Float { prescription.squeezeReopenThreshold }
+    var squeezeHoldSeconds: TimeInterval { prescription.squeezeHoldSeconds }
 
     var currentFrame: HandJointFrame? {
         latestAcceptedJointFrame
+    }
+
+    var currentViewerPosition: SIMD3<Float>? {
+        liveTracking.viewerPosition
     }
 
     var compatibilityObservation: MovementObservation {
@@ -110,11 +122,11 @@ final class RehabSessionCoordinator {
         latestAcceptedJointFrame = nil
         trackingLossBeganAt = nil
 
-        guard request.affectedHand == prescribedHand else {
+        guard request.affectedHand == prescription.affectedHand else {
             phase = .failed(SessionFailure(
                 request: request,
                 reason: .affectedHandMismatch(
-                    expected: prescribedHand,
+                    expected: prescription.affectedHand,
                     received: request.affectedHand
                 ),
                 recoveryActions: [.cancel]
@@ -169,12 +181,12 @@ final class RehabSessionCoordinator {
     func startDemoMode() -> Bool {
         guard case let .failed(failure) = phase,
               failure.recoveryActions.contains(.enterDemoMode),
-              failure.request.affectedHand == prescribedHand else {
+              failure.request.affectedHand == prescription.affectedHand else {
             return false
         }
         cleanUpTracking()
         monitoringGeneration += 1
-        let source = SyntheticMovementSource(hand: prescribedHand)
+        let source = SyntheticMovementSource(hand: prescription.affectedHand)
         demoTracking = source
         latestAcceptedJointFrame = source.latestJointFrame
         trackingLossBeganAt = nil
