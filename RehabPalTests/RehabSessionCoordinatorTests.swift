@@ -87,6 +87,51 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.currentViewerPosition)
     }
 
+    // Break caught: the coordinator could hide the app-owned table selected by
+    // shared live tracking or leave it visible after the session is cancelled.
+    @MainActor
+    func testLiveSheepDropExposesDetectedTableUntilCancel() async {
+        let live = TestLiveJointSource()
+        live.tablePlacement = TablePlacement(
+            transform: simd_float4x4(translation: [0.1, 0.74, -0.5]),
+            source: .detected
+        )
+        let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
+        let request = RehabSessionRequest(
+            experience: .exercise(.sheepDrop),
+            prescription: .demo
+        )
+
+        await coordinator.startLiveForTesting(request)
+
+        XCTAssertEqual(coordinator.currentTablePlacement, live.tablePlacement)
+        coordinator.cancel()
+        XCTAssertNil(coordinator.currentTablePlacement)
+    }
+
+    // Break caught: entering explicit Demo Mode could start live tracking or
+    // omit the deterministic estimated table needed without ARKit.
+    @MainActor
+    func testDemoSheepDropPublishesEstimatedTableWithoutStartingLiveTracking() async {
+        let live = TestLiveJointSource()
+        live.isSupported = false
+        let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
+        let request = RehabSessionRequest(
+            experience: .exercise(.sheepDrop),
+            prescription: .demo
+        )
+
+        await coordinator.startLiveForTesting(request)
+        XCTAssertTrue(coordinator.startDemoMode())
+
+        XCTAssertEqual(live.startCount, 0)
+        XCTAssertEqual(coordinator.currentTablePlacement?.source, .estimated)
+        XCTAssertEqual(
+            coordinator.currentTablePlacement?.transform.translation,
+            [0, 0.73, -0.55]
+        )
+    }
+
     @MainActor
     func testCoordinatorRejectsARequestForAnyHandOtherThanThePrescription() async {
         let live = TestLiveJointSource()
@@ -761,6 +806,7 @@ private final class TestLiveJointSource: LiveHandJointSession {
     var isSupported = true
     var latestJointFrame: HandJointFrame?
     var viewerPosition: SIMD3<Float>?
+    var tablePlacement: TablePlacement?
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private var startResults: [Result<Void, Error>]

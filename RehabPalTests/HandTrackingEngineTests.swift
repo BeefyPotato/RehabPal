@@ -1,4 +1,5 @@
 import XCTest
+import simd
 @testable import RehabPal
 
 @MainActor
@@ -80,6 +81,114 @@ final class HandTrackingEngineTests: XCTestCase {
         XCTAssertFalse(engine.isRunning)
         XCTAssertEqual(stopCount, 1)
         XCTAssertNil(engine.latestJointFrame)
+    }
+
+    // Break caught: plane work could require a second session start or fail
+    // to publish through the engine's one shared live-tracking lifecycle.
+    func testSingleStartBoundaryOwnsTableUpdatesAndStopClearsPublication() async throws {
+        let updates = TableUpdateBoundary()
+        var runCount = 0
+        let engine = HandTrackingEngine(
+            isSupported: true,
+            runSession: { runCount += 1 },
+            stopSession: {},
+            tableSurfaceUpdates: { updates.makeStream() }
+        )
+
+        try await engine.start()
+        let surface = tableSurface(id: UUID(), x: 0.15, timestamp: 10)
+        updates.yield(.added(surface), to: 0)
+        updates.yield(.updated(surface.with(timestamp: 10.4)), to: 0)
+        await waitUntil { engine.tablePlacement != nil }
+
+        XCTAssertEqual(runCount, 1)
+        XCTAssertEqual(engine.tablePlacement?.source, .detected)
+        XCTAssertEqual(engine.tablePlacement?.transform.translation.x, 0.15)
+
+        engine.stop()
+
+        XCTAssertNil(engine.tablePlacement)
+    }
+
+    // Break caught: a cancelled plane stream from generation A could move the
+    // table selected by generation B after a stop/restart race.
+    func testOldGenerationTableUpdatesAreIgnoredAfterRestart() async throws {
+        let updates = TableUpdateBoundary()
+        let engine = HandTrackingEngine(
+            isSupported: true,
+            runSession: {},
+            stopSession: {},
+            tableSurfaceUpdates: { updates.makeStream() }
+        )
+
+        try await engine.start()
+        let old = tableSurface(id: UUID(), x: -0.2, timestamp: 10)
+        updates.yield(.added(old), to: 0)
+        engine.stop()
+        try await engine.start()
+
+        updates.yield(.updated(old.with(timestamp: 10.4)), to: 0)
+        await Task.yield()
+        XCTAssertNil(engine.tablePlacement)
+
+        let current = tableSurface(id: UUID(), x: 0.2, timestamp: 20)
+        updates.yield(.added(current), to: 1)
+        updates.yield(.updated(current.with(timestamp: 20.4)), to: 1)
+        await waitUntil { engine.tablePlacement != nil }
+
+        XCTAssertEqual(engine.tablePlacement?.transform.translation.x, 0.2)
+    }
+
+    private func tableSurface(
+        id: UUID,
+        x: Float,
+        timestamp: TimeInterval
+    ) -> DetectedTableSurface {
+        DetectedTableSurface(
+            id: id,
+            timestamp: timestamp,
+            transform: simd_float4x4(translation: [x, 0.73, -0.55]),
+            extent: [1, 0.7],
+            isTracked: true
+        )
+    }
+
+    private func waitUntil(
+        _ condition: @escaping @MainActor () -> Bool
+    ) async {
+        for _ in 0..<100 where !condition() {
+            await Task.yield()
+        }
+    }
+}
+
+@MainActor
+private final class TableUpdateBoundary {
+    private var continuations: [Int: AsyncStream<TableSurfaceUpdate>.Continuation] = [:]
+    private var nextID = 0
+
+    func makeStream() -> AsyncStream<TableSurfaceUpdate> {
+        let id = nextID
+        nextID += 1
+        return AsyncStream { continuation in
+            continuations[id] = continuation
+        }
+    }
+
+    func yield(_ update: TableSurfaceUpdate, to id: Int) {
+        continuations[id]?.yield(update)
+    }
+}
+
+private extension DetectedTableSurface {
+    func with(timestamp: TimeInterval) -> DetectedTableSurface {
+        DetectedTableSurface(
+            id: id,
+            timestamp: timestamp,
+            transform: transform,
+            extent: extent,
+            isTracked: isTracked
+        )
     }
 }
 

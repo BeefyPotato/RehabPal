@@ -1,5 +1,39 @@
 import Foundation
 
+enum LiveHandJointSessionEvent: Equatable, Sendable {
+    case interrupted
+    case authorizationDenied
+    case providerFailed(String)
+}
+
+@MainActor
+protocol LiveHandJointSession: AnyObject {
+    var isSupported: Bool { get }
+    var latestJointFrame: HandJointFrame? { get }
+    var viewerPosition: SIMD3<Float>? { get }
+    var tablePlacement: TablePlacement? { get }
+    func start() async throws
+    func stop()
+    func jointFrame(for hand: AffectedHand) -> HandJointFrame?
+    func setEventHandler(
+        _ handler: @escaping (LiveHandJointSessionEvent, TimeInterval) -> Void
+    )
+}
+
+extension LiveHandJointSession {
+    var viewerPosition: SIMD3<Float>? { nil }
+    var tablePlacement: TablePlacement? { nil }
+
+    func jointFrame(for hand: AffectedHand) -> HandJointFrame? {
+        guard latestJointFrame?.hand == hand else { return nil }
+        return latestJointFrame
+    }
+
+    func setEventHandler(
+        _: @escaping (LiveHandJointSessionEvent, TimeInterval) -> Void
+    ) {}
+}
+
 enum RehabExperience: Equatable, Hashable, Sendable {
     case exercise(ExerciseKind)
     case wristAssessment

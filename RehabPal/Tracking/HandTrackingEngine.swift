@@ -8,19 +8,25 @@ final class HandTrackingEngine: MovementObservationSource {
     private let session: ARKitSession?
     private let provider: HandTrackingProvider?
     private let worldTracking: WorldTrackingProvider?
+    private let planeDetection: PlaneDetectionProvider?
+    private let tableSurfaceUpdates: (@MainActor () -> AsyncStream<TableSurfaceUpdate>)?
     private let supported: Bool
     private let runSession: @MainActor () async throws -> Void
     private let stopSession: @MainActor () -> Void
 
     private var updateTask: Task<Void, Never>?
+    private var planeUpdateTask: Task<Void, Never>?
+    private var tableFallbackTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
     private var eventHandler: ((LiveHandJointSessionEvent, TimeInterval) -> Void)?
     private var frames = HandJointFrameDemultiplexer()
+    private var tableSelector: TableSurfaceSelector?
     private var startupGeneration = 0
     private var activeGeneration: Int?
 
     private(set) var latestObservation = MovementObservation.untracked(at: 0)
     private(set) var latestJointFrame: HandJointFrame?
+    private(set) var tablePlacement: TablePlacement?
     private(set) var lastError: String?
     private(set) var isRunning = false
     let isFallback = false
@@ -29,12 +35,17 @@ final class HandTrackingEngine: MovementObservationSource {
         let session = ARKitSession()
         let provider = HandTrackingProvider()
         let worldTracking = WorldTrackingProvider()
+        let planeDetection = PlaneDetectionProvider(alignments: [.horizontal])
         self.session = session
         self.provider = provider
         self.worldTracking = worldTracking
-        supported = HandTrackingProvider.isSupported && WorldTrackingProvider.isSupported
+        self.planeDetection = planeDetection
+        tableSurfaceUpdates = nil
+        supported = HandTrackingProvider.isSupported &&
+            WorldTrackingProvider.isSupported &&
+            PlaneDetectionProvider.isSupported
         runSession = {
-            try await session.run([provider, worldTracking])
+            try await session.run([provider, worldTracking, planeDetection])
         }
         stopSession = {
             session.stop()
@@ -46,14 +57,17 @@ final class HandTrackingEngine: MovementObservationSource {
     init(
         isSupported: Bool,
         runSession: @escaping @MainActor () async throws -> Void,
-        stopSession: @escaping @MainActor () -> Void
+        stopSession: @escaping @MainActor () -> Void,
+        tableSurfaceUpdates: (@MainActor () -> AsyncStream<TableSurfaceUpdate>)? = nil
     ) {
         session = nil
         provider = nil
         worldTracking = nil
+        planeDetection = nil
         supported = isSupported
         self.runSession = runSession
         self.stopSession = stopSession
+        self.tableSurfaceUpdates = tableSurfaceUpdates
     }
 
     var isSupported: Bool { supported }
@@ -77,6 +91,7 @@ final class HandTrackingEngine: MovementObservationSource {
 
         startupGeneration += 1
         let generation = startupGeneration
+        clearPublishedTable()
 
         do {
             try await runSession()
@@ -116,8 +131,13 @@ final class HandTrackingEngine: MovementObservationSource {
         updateTask = nil
         eventTask?.cancel()
         eventTask = nil
+        planeUpdateTask?.cancel()
+        planeUpdateTask = nil
+        tableFallbackTask?.cancel()
+        tableFallbackTask = nil
         stopSession()
         clearPublishedFrames(at: ProcessInfo.processInfo.systemUptime)
+        clearPublishedTable()
     }
 
     func jointFrame(for hand: AffectedHand) -> HandJointFrame? {
@@ -141,6 +161,39 @@ final class HandTrackingEngine: MovementObservationSource {
             }
         }
 
+        let scanStartedAt = ProcessInfo.processInfo.systemUptime
+        tableSelector = TableSurfaceSelector(scanStartedAt: scanStartedAt)
+        planeUpdateTask?.cancel()
+        if let planeDetection {
+            planeUpdateTask = Task { [weak self] in
+                for await update in planeDetection.anchorUpdates {
+                    guard !Task.isCancelled else { return }
+                    self?.consume(update, generation: generation)
+                }
+            }
+        } else if let tableSurfaceUpdates {
+            let updates = tableSurfaceUpdates()
+            planeUpdateTask = Task { [weak self] in
+                for await update in updates {
+                    guard !Task.isCancelled else { return }
+                    self?.consume(update, generation: generation)
+                }
+            }
+        }
+
+        tableFallbackTask?.cancel()
+        tableFallbackTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(3))
+            } catch {
+                return
+            }
+            self?.publishTableFallback(
+                generation: generation,
+                at: scanStartedAt + 3
+            )
+        }
+
         eventTask?.cancel()
         if let session {
             eventTask = Task { [weak self] in
@@ -150,6 +203,76 @@ final class HandTrackingEngine: MovementObservationSource {
                 }
             }
         }
+    }
+
+    private func consume(
+        _ update: AnchorUpdate<PlaneAnchor>,
+        generation: Int
+    ) {
+        let tableUpdate: TableSurfaceUpdate
+        switch update.event {
+        case .added:
+            tableUpdate = .added(detectedSurface(
+                from: update.anchor,
+                timestamp: update.timestamp
+            ))
+        case .updated:
+            tableUpdate = .updated(detectedSurface(
+                from: update.anchor,
+                timestamp: update.timestamp
+            ))
+        case .removed:
+            tableUpdate = .removed(
+                id: update.anchor.id,
+                timestamp: update.timestamp
+            )
+        @unknown default:
+            tableUpdate = .removed(
+                id: update.anchor.id,
+                timestamp: update.timestamp
+            )
+        }
+        consume(tableUpdate, generation: generation)
+    }
+
+    private func detectedSurface(
+        from anchor: PlaneAnchor,
+        timestamp: TimeInterval
+    ) -> DetectedTableSurface {
+        let extent = anchor.geometry.extent
+        return DetectedTableSurface(
+            id: anchor.id,
+            timestamp: timestamp,
+            transform: simd_mul(
+                anchor.originFromAnchorTransform,
+                extent.anchorFromExtentTransform
+            ),
+            extent: [extent.width, extent.height],
+            isTracked: true
+        )
+    }
+
+    private func consume(
+        _ update: TableSurfaceUpdate,
+        generation: Int
+    ) {
+        guard activeGeneration == generation else { return }
+        let timestamp: TimeInterval
+        switch update {
+        case let .added(surface), let .updated(surface):
+            timestamp = surface.timestamp
+        case let .removed(_, removedAt):
+            timestamp = removedAt
+        }
+        tablePlacement = tableSelector?.receive(update, at: timestamp)
+    }
+
+    private func publishTableFallback(
+        generation: Int,
+        at timestamp: TimeInterval
+    ) {
+        guard activeGeneration == generation else { return }
+        tablePlacement = tableSelector?.placement(at: timestamp)
     }
 
     private func consume(
@@ -258,16 +381,26 @@ final class HandTrackingEngine: MovementObservationSource {
         updateTask = nil
         eventTask?.cancel()
         eventTask = nil
+        planeUpdateTask?.cancel()
+        planeUpdateTask = nil
+        tableFallbackTask?.cancel()
+        tableFallbackTask = nil
         if stopUnderlyingSession {
             stopSession()
         }
         clearPublishedFrames(at: ProcessInfo.processInfo.systemUptime)
+        clearPublishedTable()
     }
 
     private func clearPublishedFrames(at timestamp: TimeInterval) {
         frames.removeAll()
         latestJointFrame = nil
         latestObservation = .untracked(at: timestamp)
+    }
+
+    private func clearPublishedTable() {
+        tableSelector = nil
+        tablePlacement = nil
     }
 
     private func affectedHand(

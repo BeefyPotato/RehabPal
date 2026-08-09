@@ -1,38 +1,6 @@
 import Foundation
 import Observation
 
-enum LiveHandJointSessionEvent: Equatable, Sendable {
-    case interrupted
-    case authorizationDenied
-    case providerFailed(String)
-}
-
-@MainActor
-protocol LiveHandJointSession: AnyObject {
-    var isSupported: Bool { get }
-    var latestJointFrame: HandJointFrame? { get }
-    var viewerPosition: SIMD3<Float>? { get }
-    func start() async throws
-    func stop()
-    func jointFrame(for hand: AffectedHand) -> HandJointFrame?
-    func setEventHandler(
-        _ handler: @escaping (LiveHandJointSessionEvent, TimeInterval) -> Void
-    )
-}
-
-extension LiveHandJointSession {
-    var viewerPosition: SIMD3<Float>? { nil }
-
-    func jointFrame(for hand: AffectedHand) -> HandJointFrame? {
-        guard latestJointFrame?.hand == hand else { return nil }
-        return latestJointFrame
-    }
-
-    func setEventHandler(
-        _: @escaping (LiveHandJointSessionEvent, TimeInterval) -> Void
-    ) {}
-}
-
 struct RehabLiveStartToken: Equatable, Sendable {
     fileprivate let generation: Int
     let request: RehabSessionRequest
@@ -167,6 +135,20 @@ final class RehabSessionCoordinator {
     var currentViewerPosition: SIMD3<Float>? {
         guard provenance != .demo else { return nil }
         return liveTracking.viewerPosition
+    }
+
+    var currentTablePlacement: TablePlacement? {
+        guard case .exercise(.sheepDrop) = activeRequest?.experience else {
+            return nil
+        }
+        switch phase {
+        case .active(_, _, .live), .paused:
+            return liveTracking.tablePlacement
+        case .active(_, _, .demo):
+            return .estimatedReference
+        case .idle, .starting, .failed, .completed:
+            return nil
+        }
     }
 
     var compatibilityObservation: MovementObservation {
