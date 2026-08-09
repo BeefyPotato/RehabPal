@@ -641,7 +641,7 @@ final class RehabSessionCoordinator {
         switch experience {
         case .exercise(.balance), .wristAssessment:
             WristNeutralCalibration.requiredJoints
-        case .exercise(.squeeze):
+        case .exercise(.squeeze), .exercise(.sheepDrop):
             SqueezeHandMetrics.requiredJoints
         case .handAssessment:
             Set(FingerROMMetrics.requiredJoints(for: .thumb))

@@ -28,7 +28,7 @@ struct ExerciseDemoView: View {
         VStack(spacing: 20) {
             if !started {
                 Text(exercise.title).font(.largeTitle.bold())
-                InstructionMediaCard(kind: exercise == .balance ? .balance : .squeeze)
+                InstructionMediaCard(kind: mediaKind)
                 Text(introduction)
                     .font(.title3)
                     .multilineTextAlignment(.center)
@@ -48,10 +48,17 @@ struct ExerciseDemoView: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 620)
                 fallbackDisclosure
-            } else {
+            } else if exercise == .squeeze {
                 Text("The inferred real-ball Squeeze Buddy is active in the immersive space.")
                     .font(.title2.weight(.semibold))
                 Text("Cup your prescribed hand around the physical stress ball. The floating face appears only after a stable grasp pose is detected.")
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 620)
+                fallbackDisclosure
+            } else {
+                Text("Sheep Drop is active in the immersive space.")
+                    .font(.title2.weight(.semibold))
+                Text("Bring all five fingertips together around the sheep, carry it over the fenced pen, then spread your fingers to release. RehabPal infers this pose from fingertip positions; it does not force-measure your hand.")
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 620)
                 fallbackDisclosure
@@ -61,9 +68,22 @@ struct ExerciseDemoView: View {
     }
 
     private var introduction: String {
-        exercise == .balance
-            ? "Tilt your wrist to guide the ball into \(prescription.balanceTargetCount) changing holes."
-            : "Pick up your real stress ball for \(prescription.squeezeRepetitions) close–hold–reopen repetitions. RehabPal observes motion, never grip force."
+        switch exercise {
+        case .balance:
+            "Tilt your wrist to guide the ball into \(prescription.balanceTargetCount) changing holes."
+        case .squeeze:
+            "Pick up your real stress ball for \(prescription.squeezeRepetitions) close–hold–reopen repetitions. RehabPal observes motion, never grip force."
+        case .sheepDrop:
+            "Bring all five fingertips together around each sheep for \(prescription.sheepDropRepetitions) settled sheep placements. RehabPal infers the five-fingertip pose; it does not force-measure your hand."
+        }
+    }
+
+    private var mediaKind: InstructionMediaKind {
+        switch exercise {
+        case .balance: .balance
+        case .squeeze: .squeeze
+        case .sheepDrop: .sheepDrop
+        }
     }
 
     private var fallbackDisclosure: some View {

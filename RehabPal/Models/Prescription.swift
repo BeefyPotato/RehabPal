@@ -28,12 +28,37 @@ struct Prescription: Equatable, Sendable {
     let affectedHand: AffectedHand
     let balanceTargetCount: Int
     let squeezeRepetitions: Int
+    let sheepDropRepetitions: Int
     let squeezeCloseThreshold: Float
     let squeezeReopenThreshold: Float
     let squeezeHoldSeconds: TimeInterval
     let wristDiagnostic: WristDiagnosticPrescription
     let fingerDiagnostic: FingerDiagnosticPrescription
     let symptomReviewThreshold: Int
+
+    init(
+        affectedHand: AffectedHand,
+        balanceTargetCount: Int,
+        squeezeRepetitions: Int,
+        squeezeCloseThreshold: Float,
+        squeezeReopenThreshold: Float,
+        squeezeHoldSeconds: TimeInterval,
+        wristDiagnostic: WristDiagnosticPrescription,
+        fingerDiagnostic: FingerDiagnosticPrescription,
+        symptomReviewThreshold: Int,
+        sheepDropRepetitions: Int = 5
+    ) {
+        self.affectedHand = affectedHand
+        self.balanceTargetCount = balanceTargetCount
+        self.squeezeRepetitions = squeezeRepetitions
+        self.sheepDropRepetitions = sheepDropRepetitions
+        self.squeezeCloseThreshold = squeezeCloseThreshold
+        self.squeezeReopenThreshold = squeezeReopenThreshold
+        self.squeezeHoldSeconds = squeezeHoldSeconds
+        self.wristDiagnostic = wristDiagnostic
+        self.fingerDiagnostic = fingerDiagnostic
+        self.symptomReviewThreshold = symptomReviewThreshold
+    }
 
     nonisolated static let demo = Prescription(
         affectedHand: .right,
@@ -59,7 +84,8 @@ struct Prescription: Equatable, Sendable {
             thumbOppositionReduction: 0.25,
             thumbOppositionReturnTolerance: 0.10
         ),
-        symptomReviewThreshold: 6
+        symptomReviewThreshold: 6,
+        sheepDropRepetitions: 5
     )
 
     func goal(for experience: RehabExperience) -> Int {
@@ -68,6 +94,8 @@ struct Prescription: Equatable, Sendable {
             balanceTargetCount
         case .exercise(.squeeze):
             squeezeRepetitions
+        case .exercise(.sheepDrop):
+            sheepDropRepetitions
         case .wristAssessment:
             wristDiagnostic.attemptsPerDirection * WristAssessmentTarget.allCases.count
         case .handAssessment:
@@ -87,11 +115,21 @@ struct Prescription: Equatable, Sendable {
 enum ExerciseKind: String, CaseIterable, Equatable, Hashable, Sendable {
     case balance
     case squeeze
+    case sheepDrop
 
     var title: String {
         switch self {
         case .balance: "Balance Platform"
         case .squeeze: "Squeeze Buddy"
+        case .sheepDrop: "Sheep Drop"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .balance: "circle.grid.cross"
+        case .squeeze: "hand.raised.fingers.spread"
+        case .sheepDrop: "pawprint.fill"
         }
     }
 }

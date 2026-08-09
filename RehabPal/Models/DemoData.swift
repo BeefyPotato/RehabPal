@@ -41,10 +41,19 @@ struct GameplayResult: Equatable, Sendable {
     let trackingNote: String
 
     nonisolated static func fixture(for exercise: ExerciseKind) -> GameplayResult {
-        GameplayResult(
+        let dose: Int
+        switch exercise {
+        case .balance:
+            dose = Prescription.demo.balanceTargetCount
+        case .squeeze:
+            dose = Prescription.demo.squeezeRepetitions
+        case .sheepDrop:
+            dose = Prescription.demo.sheepDropRepetitions
+        }
+        return GameplayResult(
             exercise: exercise,
-            prescribedDose: exercise == .balance ? Prescription.demo.balanceTargetCount : 5,
-            completedDose: exercise == .balance ? Prescription.demo.balanceTargetCount : 5,
+            prescribedDose: dose,
+            completedDose: dose,
             trackingNote: "Tracking remained usable"
         )
     }

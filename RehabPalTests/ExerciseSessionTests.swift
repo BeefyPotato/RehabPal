@@ -4,6 +4,18 @@ import simd
 
 @MainActor
 final class ExerciseSessionTests: XCTestCase {
+    // Break caught: adding a new exercise without its clinician-prescribed goal
+    // can route it through the shared session with an unrelated dose.
+    func testSheepDropUsesItsPrescribedExerciseContract() {
+        XCTAssertEqual(ExerciseKind.sheepDrop.title, "Sheep Drop")
+        XCTAssertEqual(Prescription.demo.sheepDropRepetitions, 5)
+        XCTAssertEqual(
+            Prescription.demo.sessionRequest(for: .exercise(.sheepDrop)).goal,
+            5
+        )
+        XCTAssertEqual(GameplayResult.fixture(for: .sheepDrop).exercise, .sheepDrop)
+    }
+
     // Break caught: hard-coding the prototype's old eight targets ignores the clinician prescription.
     func testBalanceUsesThePrescriptionTenTargetGoal() {
         let session = BalanceSession(prescription: .demo, seed: 42)
