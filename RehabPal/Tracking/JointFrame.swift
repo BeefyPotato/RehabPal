@@ -177,7 +177,10 @@ struct WristNeutralCalibration: Sendable {
     static func capture(from frame: HandJointFrame) -> WristNeutralCalibration? {
         guard frame.confidence(requiring: requiredJoints) == .good,
               let wristTransform = frame.joint(.wrist)?.transform,
-              levelKnuckles.allSatisfy({ frame.joint($0)?.position != nil }) else {
+              requiredJoints.allSatisfy({ joint in
+                  guard let transform = frame.joint(joint)?.transform else { return false }
+                  return isFinite(transform)
+              }) else {
             return nil
         }
         let heights = levelKnuckles.compactMap { frame.joint($0)?.position?.y }
@@ -197,6 +200,13 @@ struct WristNeutralCalibration: Sendable {
 
     private static func isFinite(_ vector: SIMD4<Float>) -> Bool {
         vector.x.isFinite && vector.y.isFinite && vector.z.isFinite && vector.w.isFinite
+    }
+
+    private static func isFinite(_ transform: simd_float4x4) -> Bool {
+        isFinite(transform.columns.0) &&
+        isFinite(transform.columns.1) &&
+        isFinite(transform.columns.2) &&
+        isFinite(transform.columns.3)
     }
 
     private static let levelKnuckles: Set<HandJoint> = [

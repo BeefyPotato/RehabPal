@@ -80,6 +80,19 @@ final class JointFrameTests: XCTestCase {
         XCTAssertNil(WristNeutralCalibration.capture(from: frame))
     }
 
+    // Break caught: a tracked knuckle with a non-finite transform can otherwise pass confidence and height checks as a neutral pose.
+    func testCalibrationRejectsNonFiniteRequiredKnuckleTransform() {
+        var joints = Dictionary(uniqueKeysWithValues: WristNeutralCalibration.requiredJoints.map { joint in
+            (joint, HandJointSample.tracked(transform: matrix_identity_float4x4))
+        })
+        joints[.indexFingerKnuckle] = .tracked(transform: simd_float4x4(
+            translation: SIMD3<Float>(.nan, 0, 0)
+        ))
+        let frame = HandJointFrame.synthetic(hand: .right, timestamp: 1, joints: joints)
+
+        XCTAssertNil(WristNeutralCalibration.capture(from: frame))
+    }
+
     // Break caught: calculating absolute orientation instead of orientation relative to neutral moves the tray at rest.
     func testCalibrationMeasuresWristTiltRelativeToNeutral() throws {
         let neutral = wristTransform(pitch: 0.2, roll: -0.1, yaw: 0.5)
