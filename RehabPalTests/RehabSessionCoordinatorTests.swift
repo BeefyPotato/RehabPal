@@ -165,6 +165,25 @@ final class RehabSessionCoordinatorTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveStartupRestartsFrameMonitorAfterStartingPhase() async {
+        let live = TestLiveJointSource()
+        let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
+        let request = RehabSessionRequest(
+            experience: .exercise(.balance),
+            prescription: .demo
+        )
+
+        let token = try! XCTUnwrap(coordinator.prepareLiveStart(request))
+        let startingGeneration = coordinator.monitoringGeneration
+
+        XCTAssertFalse(coordinator.shouldMonitorFrames)
+        let started = await coordinator.startPreparedLive(token)
+        XCTAssertTrue(started)
+        XCTAssertTrue(coordinator.shouldMonitorFrames)
+        XCTAssertGreaterThan(coordinator.monitoringGeneration, startingGeneration)
+    }
+
+    @MainActor
     func testLiveFailureOffersRetryAndExplicitDemoWithoutSwitchingSilently() async {
         let live = TestLiveJointSource(startResults: [.failure(TestLiveError.denied)])
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)

@@ -279,6 +279,10 @@ final class RehabSessionCoordinator {
             ),
             provenance: .live
         ))
+        // The monitor task launched for `.starting` has already exited because
+        // frames are only polled for an active live session. Give SwiftUI a new
+        // task identity now that polling is authorized.
+        monitoringGeneration += 1
         return true
     }
 
