@@ -110,9 +110,14 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         )
 
         await coordinator.startLive(request)
+        let failedMonitoringGeneration = coordinator.monitoringGeneration
         await coordinator.retryLive()
         XCTAssertEqual(coordinator.provenance, .live)
         XCTAssertEqual(live.startCount, 2)
+        XCTAssertGreaterThan(
+            coordinator.monitoringGeneration,
+            failedMonitoringGeneration
+        )
 
         coordinator.cancel()
         let alwaysFailing = TestLiveJointSource(startResults: [.failure(TestLiveError.denied)])
@@ -152,6 +157,11 @@ final class RehabSessionCoordinatorTests: XCTestCase {
                 progress: SessionProgress(completed: 2, goal: 5, partial: 0),
                 reason: .trackingLost(requiresRecalibration: false)
             )
+        )
+        XCTAssertEqual(coordinator.provenance, .live)
+        XCTAssertEqual(
+            coordinator.authorization,
+            ActiveRehabSession(request: request, provenance: .live)
         )
 
         coordinator.receiveJointFrame(trackedFrame(hand: .right, at: 6.1), at: 6.1)

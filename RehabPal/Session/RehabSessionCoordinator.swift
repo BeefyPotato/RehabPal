@@ -22,6 +22,7 @@ final class RehabSessionCoordinator {
 
     private(set) var phase: RehabSessionPhase = .idle
     private(set) var latestAcceptedJointFrame: HandJointFrame?
+    private(set) var monitoringGeneration = 0
 
     init(prescription: Prescription, liveTracking: any LiveHandJointSession) {
         prescribedHand = prescription.affectedHand
@@ -62,11 +63,18 @@ final class RehabSessionCoordinator {
         switch phase {
         case let .active(_, _, provenance):
             provenance
+        case .paused:
+            .live
         case let .completed(outcome):
             outcome.provenance
-        case .idle, .starting, .paused, .failed:
+        case .idle, .starting, .failed:
             nil
         }
+    }
+
+    var authorization: ActiveRehabSession? {
+        guard let request = activeRequest, let provenance else { return nil }
+        return ActiveRehabSession(request: request, provenance: provenance)
     }
 
     var pauseReason: SessionPauseReason? {
@@ -97,6 +105,7 @@ final class RehabSessionCoordinator {
     }
 
     func startLive(_ request: RehabSessionRequest) async {
+        monitoringGeneration += 1
         cleanUpTracking()
         latestAcceptedJointFrame = nil
         trackingLossBeganAt = nil
@@ -164,6 +173,7 @@ final class RehabSessionCoordinator {
             return false
         }
         cleanUpTracking()
+        monitoringGeneration += 1
         let source = SyntheticMovementSource(hand: prescribedHand)
         demoTracking = source
         latestAcceptedJointFrame = source.latestJointFrame

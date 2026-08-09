@@ -87,7 +87,7 @@ struct ContentView: View {
         .task(id: currentRequest) {
             await transition(to: currentRequest)
         }
-        .task(id: session.activeRequest) {
+        .task(id: session.monitoringGeneration) {
             await monitorJointFrames()
         }
         .onDisappear {
@@ -189,18 +189,27 @@ struct ContentView: View {
             await closeImmersiveSession()
         }
         await session.startLive(request)
-        guard session.provenance == .live else { return }
-        await presentImmersiveSpace()
+        await authorizeAndPresent()
     }
 
     private func retryLive() async {
         await session.retryLive()
-        guard session.provenance == .live else { return }
-        await presentImmersiveSpace()
+        await authorizeAndPresent()
     }
 
     private func enterDemoMode() async {
         guard session.startDemoMode() else { return }
+        await authorizeAndPresent()
+    }
+
+    private func authorizeAndPresent() async {
+        guard let authorization = session.authorization,
+              state.activateSession(
+                  authorization.request,
+                  provenance: authorization.provenance
+              ) else {
+            return
+        }
         await presentImmersiveSpace()
     }
 
@@ -210,25 +219,23 @@ struct ContentView: View {
         case .opened:
             switch immersiveLifecycle.completeOpening(attempt) {
             case .accepted:
-                guard let request = session.activeRequest,
-                      let provenance = session.provenance,
-                      state.activateSession(request, provenance: provenance) else {
-                    await closeImmersiveSession()
-                    return
-                }
+                break
             case .dismissStaleOpen:
                 await dismissImmersiveSpace()
             }
         case .userCancelled:
             if immersiveLifecycle.failOpening(attempt) {
+                state.cancelActiveSession()
                 session.failImmersiveSpace("Opening the immersive session was cancelled.")
             }
         case .error:
             if immersiveLifecycle.failOpening(attempt) {
+                state.cancelActiveSession()
                 session.failImmersiveSpace("The immersive session could not be opened.")
             }
         @unknown default:
             if immersiveLifecycle.failOpening(attempt) {
+                state.cancelActiveSession()
                 session.failImmersiveSpace("The immersive session could not be opened.")
             }
         }
