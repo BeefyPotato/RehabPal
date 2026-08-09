@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 struct AssessmentProtocol: Equatable, Sendable {
     let wristAttemptsPerDirection: Int
@@ -95,6 +96,44 @@ struct HandROMAssessmentSession: Sendable {
             consistency: max(0, 100 - spread),
             trackingConfidence: mean(\.trackingConfidence),
             attemptCount: values.count
+        )
+    }
+}
+
+struct FingerROMCaptureAccumulator: Sendable {
+    private var minimumAngles: SIMD3<Float>?
+    private var maximumAngles: SIMD3<Float>?
+
+    mutating func record(_ angles: SIMD3<Float>) {
+        guard angles.x.isFinite, angles.y.isFinite, angles.z.isFinite else { return }
+        if let minimumAngles, let maximumAngles {
+            self.minimumAngles = simd.min(minimumAngles, angles)
+            self.maximumAngles = simd.max(maximumAngles, angles)
+        } else {
+            minimumAngles = angles
+            maximumAngles = angles
+        }
+    }
+
+    mutating func finish(trackingConfidence: Double) -> FingerROMAttempt? {
+        defer {
+            minimumAngles = nil
+            maximumAngles = nil
+        }
+        guard trackingConfidence.isFinite,
+              let minimumAngles,
+              let maximumAngles else { return nil }
+
+        let excursion = maximumAngles - minimumAngles
+        guard excursion.x.isFinite, excursion.y.isFinite, excursion.z.isFinite else { return nil }
+
+        return FingerROMAttempt(
+            mcpExcursion: Double(excursion.x),
+            pipExcursion: Double(excursion.y),
+            dipExcursion: Double(excursion.z),
+            maximumFlexion: Double(maximumAngles.max()),
+            maximumExtension: Double(minimumAngles.min()),
+            trackingConfidence: trackingConfidence
         )
     }
 }

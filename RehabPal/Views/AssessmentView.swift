@@ -33,8 +33,7 @@ struct HandROMAssessmentView: View {
     @State private var digitIndex = 0
     @State private var attempt = 1
     @State private var results: [HandDigit: DigitROMSummary] = [:]
-    @State private var liveMin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
-    @State private var liveMax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+    @State private var captureAccumulator = FingerROMCaptureAccumulator()
     @State private var recordedAttempts: [HandDigit: [FingerROMAttempt]] = [:]
 
     private var digit: HandDigit { HandDigit.allCases[digitIndex] }
@@ -60,19 +59,15 @@ struct HandROMAssessmentView: View {
         .onChange(of: liveObservation) { _, observation in
             guard !useDemoFallback, observation.isTracked, let sample = observation.digits[digit], sample.isTracked else { return }
             let angles = SIMD3<Float>(sample.mcpAngle, sample.pipAngle, sample.dipAngle)
-            liveMin = simd.min(liveMin, angles)
-            liveMax = simd.max(liveMax, angles)
+            captureAccumulator.record(angles)
         }
     }
 
     private func capture() {
         if !useDemoFallback {
-            guard liveMin.x.isFinite, liveMax.x.isFinite else { return }
-            let excursion = liveMax - liveMin
-            let captured = FingerROMAttempt(mcpExcursion: Double(excursion.x), pipExcursion: Double(excursion.y), dipExcursion: Double(excursion.z), maximumFlexion: Double(liveMax.max()), maximumExtension: Double(liveMin.min()), trackingConfidence: liveObservation.quality == .good ? 0.95 : 0.65)
+            let confidence = liveObservation.quality == .good ? 0.95 : 0.65
+            guard let captured = captureAccumulator.finish(trackingConfidence: confidence) else { return }
             recordedAttempts[digit, default: []].append(captured)
-            liveMin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
-            liveMax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         }
         if attempt == 1 { attempt = 2; return }
         var completedResults = results

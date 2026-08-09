@@ -82,4 +82,40 @@ final class AssessmentReportTests: XCTestCase {
         let summary = DigitROMSummary(digit: .ring, totalExcursion: 80, maximumFlexion: 75, maximumExtension: 5, consistency: 90, trackingConfidence: 0.3, attemptCount: 2)
         XCTAssertFalse(summary.isAvailable)
     }
+
+    func testFingerROMCaptureWithoutTrackedSampleIsUnavailable() {
+        var capture = FingerROMCaptureAccumulator()
+
+        XCTAssertNil(capture.finish(trackingConfidence: 0.95))
+    }
+
+    func testFingerROMCaptureProducesFiniteExcursionFromTrackedSamples() {
+        var capture = FingerROMCaptureAccumulator()
+        capture.record(SIMD3<Float>(10, 20, 30))
+        capture.record(SIMD3<Float>(40, 50, 60))
+
+        let attempt = capture.finish(trackingConfidence: 0.95)
+
+        XCTAssertEqual(attempt?.mcpExcursion, 30)
+        XCTAssertEqual(attempt?.pipExcursion, 30)
+        XCTAssertEqual(attempt?.dipExcursion, 30)
+        XCTAssertEqual(attempt?.maximumFlexion, 60)
+        XCTAssertEqual(attempt?.maximumExtension, 10)
+        XCTAssertTrue(attempt?.totalExcursion.isFinite == true)
+    }
+
+    func testFingerROMCaptureIgnoresNonfiniteSamples() {
+        var capture = FingerROMCaptureAccumulator()
+        capture.record(SIMD3<Float>(.infinity, 20, 30))
+
+        XCTAssertNil(capture.finish(trackingConfidence: 0.95))
+    }
+
+    func testFingerROMCaptureResetsAfterFinish() {
+        var capture = FingerROMCaptureAccumulator()
+        capture.record(SIMD3<Float>(10, 20, 30))
+
+        XCTAssertNotNil(capture.finish(trackingConfidence: 0.95))
+        XCTAssertNil(capture.finish(trackingConfidence: 0.95))
+    }
 }
