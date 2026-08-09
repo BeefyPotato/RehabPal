@@ -43,8 +43,8 @@ struct GameplayResult: Equatable, Sendable {
     nonisolated static func fixture(for exercise: ExerciseKind) -> GameplayResult {
         GameplayResult(
             exercise: exercise,
-            prescribedDose: exercise == .balance ? 8 : 5,
-            completedDose: exercise == .balance ? 8 : 5,
+            prescribedDose: exercise == .balance ? Prescription.demo.balanceTargetCount : 5,
+            completedDose: exercise == .balance ? Prescription.demo.balanceTargetCount : 5,
             trackingNote: "Tracking remained usable"
         )
     }

@@ -9,9 +9,6 @@ struct ExerciseDemoView: View {
     let onCancel: () -> Void
 
     @State private var started = false
-    @State private var balance: MovingHoleBalanceSession
-    @State private var ballPosition = SIMD2<Float>.zero
-    @State private var lastBalanceTimestamp: TimeInterval?
     @State private var squeeze: SqueezeSession
     @State private var closure: Float = 0
     @State private var completedResult: GameplayResult?
@@ -30,7 +27,7 @@ struct ExerciseDemoView: View {
         self.liveObservation = liveObservation
         self.onComplete = onComplete
         self.onCancel = onCancel
-        _balance = State(initialValue: MovingHoleBalanceSession(seed: 20260809))
+        _started = State(initialValue: exercise == .balance)
         _squeeze = State(initialValue: SqueezeSession(
             repetitions: prescription.squeezeRepetitions,
             closeThreshold: prescription.squeezeCloseThreshold,
@@ -44,7 +41,7 @@ struct ExerciseDemoView: View {
             if let completedResult {
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 72)).foregroundStyle(.green)
                 Text("Prescribed dose complete").font(.largeTitle.bold())
-                Text(exercise == .balance ? "8 targets reached" : "\(completedResult.completedDose) close–hold–open repetitions")
+                Text(exercise == .balance ? "\(completedResult.completedDose) targets reached" : "\(completedResult.completedDose) close–hold–open repetitions")
                     .font(.title2)
                 Text("Return to today’s routine for your next step.").foregroundStyle(.secondary)
                 Button("Continue") { onComplete(completedResult) }
@@ -62,25 +59,12 @@ struct ExerciseDemoView: View {
                     .controlSize(.extraLarge)
                 Button("Back", action: onCancel).buttonStyle(.borderless)
             } else if exercise == .balance {
-                BalancePlatformView(
-                    target: balance.currentTarget,
-                    ballPosition: ballPosition,
-                    progress: balance.progress,
-                    trackingVisible: useDemoFallback || liveObservation.isTracked
-                )
+                Text("The calibrated balance platform is active in the immersive space.")
+                    .font(.title2.weight(.semibold))
+                Text("Hold the prescribed hand level to calibrate, then tilt your wrist to guide each physics ball into its hole.")
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 620)
                 fallbackDisclosure
-                if useDemoFallback {
-                    Button("Guide ball into hole (demo tracking)") {
-                        ballPosition = balance.currentTarget.position
-                        let start = Double(balance.completedRepetitions)
-                        _ = balance.update(ballPosition: ballPosition, at: start, isTracked: true)
-                        let done = balance.update(ballPosition: ballPosition, at: start + 0.51, isTracked: true)
-                        ballPosition = .zero
-                        if done { finish(.balance) }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                }
             } else {
                 SqueezeBuddyView(
                     closure: closure,
@@ -114,7 +98,7 @@ struct ExerciseDemoView: View {
 
     private var introduction: String {
         exercise == .balance
-            ? "Tilt your wrist to guide the ball into eight changing holes. Hold it there briefly to score each rep."
+            ? "Tilt your wrist to guide the ball into \(prescription.balanceTargetCount) changing holes."
             : "Pick up your real stress ball. Close, hold gently, and fully reopen; RehabPal observes motion, never grip force."
     }
 
@@ -125,23 +109,7 @@ struct ExerciseDemoView: View {
     }
 
     private func consumeLiveObservation(_ observation: MovementObservation) {
-        if exercise == .balance {
-            guard observation.isTracked else {
-                lastBalanceTimestamp = nil
-                _ = balance.update(ballPosition: ballPosition, at: observation.timestamp, isTracked: false)
-                return
-            }
-            let delta = min(max(observation.timestamp - (lastBalanceTimestamp ?? observation.timestamp), 0), 0.05)
-            lastBalanceTimestamp = observation.timestamp
-            let velocity = SIMD2<Float>(observation.wristRoll, observation.wristPitch) * 0.38
-            ballPosition += velocity * Float(delta)
-            ballPosition.x = min(max(ballPosition.x, -0.235), 0.235)
-            ballPosition.y = min(max(ballPosition.y, -0.16), 0.16)
-            let completedBefore = balance.completedRepetitions
-            let done = balance.update(ballPosition: ballPosition, at: observation.timestamp, isTracked: true)
-            if balance.completedRepetitions > completedBefore { ballPosition = .zero }
-            if done { finish(.balance) }
-        } else {
+        if exercise == .squeeze {
             closure = observation.closure
             let done = squeeze.update(
                 closure: observation.closure,

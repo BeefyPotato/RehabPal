@@ -11,15 +11,14 @@ struct ContentView: View {
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
 
-    init() {
-        let state = AppState()
-        let tracking = HandTrackingEngine()
+    init(
+        state: AppState,
+        handTracking: HandTrackingEngine,
+        session: RehabSessionCoordinator
+    ) {
         _state = State(initialValue: state)
-        _handTracking = State(initialValue: tracking)
-        _session = State(initialValue: RehabSessionCoordinator(
-            prescription: state.prescription,
-            liveTracking: tracking
-        ))
+        _handTracking = State(initialValue: handTracking)
+        _session = State(initialValue: session)
     }
 
     var body: some View {
@@ -89,6 +88,15 @@ struct ContentView: View {
         }
         .task(id: session.monitoringGeneration) {
             await monitorJointFrames()
+        }
+        .onChange(of: session.phase) { _, phase in
+            guard case let .completed(outcome) = phase,
+                  state.route(outcome) else {
+                return
+            }
+            if case .exercise = outcome.request.experience {
+                selectedExercise = nil
+            }
         }
         .onDisappear {
             Task { await closeImmersiveSession() }
@@ -161,7 +169,7 @@ struct ContentView: View {
             return RehabSessionRequest(
                 experience: .exercise(selectedExercise),
                 prescription: state.prescription,
-                goal: selectedExercise == .balance ? 8 : state.prescription.squeezeRepetitions
+                goal: selectedExercise == .balance ? state.prescription.balanceTargetCount : state.prescription.squeezeRepetitions
             )
         case .wristAssessment:
             return RehabSessionRequest(
@@ -314,5 +322,14 @@ private struct SessionLifecycleCard<Content: View>: View {
 }
 
 #Preview {
-    ContentView()
+    let state = AppState()
+    let tracking = HandTrackingEngine()
+    ContentView(
+        state: state,
+        handTracking: tracking,
+        session: RehabSessionCoordinator(
+            prescription: state.prescription,
+            liveTracking: tracking
+        )
+    )
 }

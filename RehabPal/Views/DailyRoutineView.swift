@@ -12,7 +12,7 @@ struct DailyRoutineView: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
             HStack(spacing: 24) {
-                exerciseCard(.balance, dose: "8 ball-in-hole repetitions")
+                exerciseCard(.balance, dose: "\(state.prescription.balanceTargetCount) ball-in-hole repetitions")
                 exerciseCard(.squeeze, dose: "\(state.prescription.squeezeRepetitions) close–hold–open reps")
             }
             Text(state.canStartAssessment ? "Daily assessment unlocked" : "Daily assessment unlocks after both exercises")

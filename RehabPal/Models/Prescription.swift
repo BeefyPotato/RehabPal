@@ -7,6 +7,7 @@ enum AffectedHand: String, Equatable, Sendable {
 
 struct Prescription: Equatable, Sendable {
     let affectedHand: AffectedHand
+    let balanceTargetCount: Int
     let balanceCorrectionsPerDirection: Int
     let balanceCentreTolerance: Float
     let balanceHoldSeconds: TimeInterval
@@ -20,6 +21,7 @@ struct Prescription: Equatable, Sendable {
 
     nonisolated static let demo = Prescription(
         affectedHand: .right,
+        balanceTargetCount: 10,
         balanceCorrectionsPerDirection: 1,
         balanceCentreTolerance: 0.16,
         balanceHoldSeconds: 0.8,
