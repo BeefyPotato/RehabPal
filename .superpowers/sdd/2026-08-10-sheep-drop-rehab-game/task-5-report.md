@@ -4,9 +4,11 @@
 
 **DONE_WITH_CONCERNS.** The complete Task 5 implementation compiles for
 generic visionOS, and the focused serial Apple Vision Pro simulator suite
-passes 94/94. Physical Vision Pro placement, hand interaction, and comfort
-acceptance remain unverified. The full serial runtime suite still reports the
-same eight unrelated failures recorded before Task 5 at commit `000dc33`.
+passes 94/94. The three Task 5 review findings were subsequently fixed, and
+their three focused simulator regressions pass. Physical Vision Pro placement,
+hand interaction, and comfort acceptance remain unverified. The full serial
+runtime suite still reports the same eight unrelated failures recorded before
+Task 5 at commit `000dc33`.
 
 ## RED → GREEN
 
@@ -38,8 +40,9 @@ Implemented:
   0.36 m grass pen, four 0.07 m static fence walls, and 0.26 m yellow spawn pad;
 - a 0.15 kg fitted spherical sheep collision root using friction 0.7/0.55,
   restitution 0.1, and damping 1.2;
-- cancellation-aware asynchronous `Sheep.usdz` loading, with the normalized
-  visible model attached as `SheepVisible` beneath the collision root;
+- cancellation-aware asynchronous `Sheep.usdz` loading, selecting the
+  sheep-bearing `RootNode` subtree and attaching its normalized wrapper as
+  `SheepVisible` beneath the collision root;
 - pen-local position, velocity, and joint-frame conversion with floor `y = 0`;
 - detected/estimated placement application and a first-pickup placement latch;
 - idempotent absolute physics commands for pickup, carry, release, freeze, and
@@ -102,3 +105,41 @@ scope, no unrelated Balance, Squeeze, or diagnostic code was altered.
   scale/orientation, fence collision feel, pickup comfort, HUD occlusion, and
   interruption behavior require the approved device acceptance pass.
 - The known non-Task-5 full-runtime failures remain outside this task's scope.
+
+## Review fix round 1
+
+### RED → GREEN
+
+Three regressions were added before their production changes and each produced
+the intended generic test-build failure:
+
+- unlocked placement removal required an optional placement input and an
+  availability state;
+- real-asset selection required a `SheepDropAsset` model extractor; and
+- Demo-only HUD rendering required a provenance-filtered action title.
+
+The fixes now:
+
+- mirror `nil` coordinator placement while unlocked, disabling/hiding the
+  scene and freezing the physics path until a fallback or new placement
+  arrives, while a first-pickup lock continues to retain its placement;
+- detach only `RootNode/AnimalArmature/.../Sheep` from the imported USDZ,
+  excluding the sibling `Cube`, camera, and lights, then center and fit bounds
+  from that sheep hierarchy alone inside the collision radius; and
+- expose a Demo action title only when session provenance is `.demo`, so live
+  hand-tracking sessions render no inert Demo button.
+
+### Verification
+
+- The three new Apple Vision Pro simulator regressions passed together: **3
+  passed, 0 failed** (xcodebuild exit 0). This includes loading and inspecting
+  the real bundled `Sheep.usdz` hierarchy and its fitted visible bounds.
+- Full generic visionOS `build-for-testing`: **exit 0**.
+- Generic visionOS app build: **exit 0**.
+- `git diff --check`: **exit 0**.
+- Static Sheep Drop scan still finds no `DragGesture` or
+  `targetedToAnyEntity` usage.
+- A broader six-class serial simulator rerun completed its test execution but
+  Xcode hung while finalizing the test log and timed out collecting simulator
+  diagnostics after 600 seconds; it was interrupted and is not reported as a
+  passing run. The bounded three-regression run above completed normally.

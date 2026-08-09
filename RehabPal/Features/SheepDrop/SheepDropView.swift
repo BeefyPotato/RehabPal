@@ -93,7 +93,11 @@ struct SheepDropPlacementState: Equatable, Sendable {
     private(set) var placement: TablePlacement?
     private(set) var isLocked = false
 
-    mutating func receive(_ placement: TablePlacement) {
+    var isPlacementAvailable: Bool {
+        placement != nil
+    }
+
+    mutating func receive(_ placement: TablePlacement?) {
         guard !isLocked else { return }
         self.placement = placement
     }
@@ -104,18 +108,47 @@ struct SheepDropPlacementState: Equatable, Sendable {
     }
 }
 
+enum SheepDropAsset {
+    @MainActor
+    static func makeVisibleModel(from importedScene: Entity) -> Entity? {
+        guard let sheepHierarchy = importedScene.findEntity(named: "RootNode") else {
+            return nil
+        }
+        let bounds = sheepHierarchy.visualBounds(relativeTo: sheepHierarchy)
+        let halfDiagonal = simd_length(bounds.extents) / 2
+        guard halfDiagonal.isFinite, halfDiagonal > .ulpOfOne,
+              bounds.center.x.isFinite, bounds.center.y.isFinite,
+              bounds.center.z.isFinite else {
+            return nil
+        }
+
+        let scale = SheepDropSceneConfiguration.sheepVisibleRadius / halfDiagonal
+        sheepHierarchy.removeFromParent()
+        sheepHierarchy.scale = SIMD3<Float>(repeating: scale)
+        sheepHierarchy.position = -bounds.center * scale
+
+        let visibleSheep = Entity()
+        visibleSheep.name = "SheepVisible"
+        visibleSheep.addChild(sheepHierarchy)
+        return visibleSheep
+    }
+}
+
 struct SheepDropHUDPresentation: Equatable, Sendable {
     let provenanceLabel: String
     let tableLabel: String
     let instruction: String
+    let demoActionTitle: String?
 
     init(
         phase: SheepDropPhase,
         pauseReason: SessionPauseReason?,
         provenance: SessionProvenance?,
         tableSource: TablePlacement.Source?,
-        isOverPen: Bool
+        isOverPen: Bool,
+        requestedDemoActionTitle: String? = nil
     ) {
+        demoActionTitle = provenance == .demo ? requestedDemoActionTitle : nil
         provenanceLabel = provenance == .demo
             ? "DEMO FALLBACK — SIMULATED"
             : "LIVE HAND TRACKING"
@@ -246,12 +279,15 @@ struct SheepDropView: View {
             }
 
             do {
-                let visibleSheep = try await Entity(named: "Sheep", in: .main)
+                let importedScene = try await Entity(named: "Sheep", in: .main)
                 try Task.checkCancellation()
-                guard normalizeAndAttach(visibleSheep) else {
+                guard let visibleSheep = SheepDropAsset.makeVisibleModel(
+                    from: importedScene
+                ) else {
                     assetLoadState = .failed("Sheep.usdz has no usable visual bounds.")
                     return
                 }
+                sheepBody.addChild(visibleSheep)
                 assetLoadState = .ready
                 sceneRoot.isEnabled = placementState.placement != nil
             } catch is CancellationError {
@@ -273,7 +309,7 @@ struct SheepDropView: View {
                     progress: game.progress,
                     presentation: hudPresentation,
                     loadState: assetLoadState,
-                    demoActionTitle: demoStage.actionTitle,
+                    demoActionTitle: hudPresentation.demoActionTitle,
                     onDemoStep: performDemoStep
                 )
             }
@@ -293,7 +329,8 @@ struct SheepDropView: View {
             pauseReason: coordinator.pauseReason,
             provenance: coordinator.provenance,
             tableSource: placementState.placement?.source,
-            isOverPen: sheepIsOverPen
+            isOverPen: sheepIsOverPen,
+            requestedDemoActionTitle: demoStage.actionTitle
         )
     }
 
@@ -445,22 +482,6 @@ struct SheepDropView: View {
         return entity
     }
 
-    private func normalizeAndAttach(_ visibleSheep: Entity) -> Bool {
-        let bounds = visibleSheep.visualBounds(relativeTo: visibleSheep)
-        let halfDiagonal = simd_length(bounds.extents) / 2
-        guard halfDiagonal.isFinite, halfDiagonal > .ulpOfOne,
-              bounds.center.x.isFinite, bounds.center.y.isFinite,
-              bounds.center.z.isFinite else {
-            return false
-        }
-        let scale = SheepDropSceneConfiguration.sheepVisibleRadius / halfDiagonal
-        visibleSheep.name = "SheepVisible"
-        visibleSheep.scale = SIMD3<Float>(repeating: scale)
-        visibleSheep.position = -bounds.center * scale
-        sheepBody.addChild(visibleSheep)
-        return true
-    }
-
     private func gameStep(deltaTime: TimeInterval) {
         coordinator.updateRequiredJoints(SheepDropSession.requiredJoints)
         refreshPlacement()
@@ -500,9 +521,7 @@ struct SheepDropView: View {
     }
 
     private func refreshPlacement() {
-        if let placement = coordinator.currentTablePlacement {
-            placementState.receive(placement)
-        }
+        placementState.receive(coordinator.currentTablePlacement)
         guard let placement = placementState.placement else {
             sceneRoot.isEnabled = false
             return

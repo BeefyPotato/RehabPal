@@ -97,9 +97,35 @@ final class ExerciseSessionTests: XCTestCase {
         state.receive(first)
         state.lockAtFirstPickup()
         state.receive(later)
+        state.receive(nil)
 
         XCTAssertEqual(state.placement, first)
         XCTAssertTrue(state.isLocked)
+    }
+
+    // Break caught: retaining an unlocked placement after the selector removes
+    // it leaves the pen visible and interactive at an obsolete table pose.
+    func testSheepDropUnlockedPlacementMirrorsRemovalAndAcceptsReplacement() {
+        let detected = TablePlacement(
+            transform: simd_float4x4(translation: [0, 0.73, -0.55]),
+            source: .detected
+        )
+        let fallback = TablePlacement(
+            transform: simd_float4x4(translation: [0, 0.74, -0.6]),
+            source: .estimated
+        )
+        var state = SheepDropPlacementState()
+
+        state.receive(detected)
+        XCTAssertTrue(state.isPlacementAvailable)
+
+        state.receive(nil)
+        XCTAssertNil(state.placement)
+        XCTAssertFalse(state.isPlacementAvailable)
+
+        state.receive(fallback)
+        XCTAssertEqual(state.placement, fallback)
+        XCTAssertTrue(state.isPlacementAvailable)
     }
 
     // Break caught: generic phase copy can hide tracking provenance, table
@@ -136,6 +162,31 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertEqual(demo.provenanceLabel, "DEMO FALLBACK — SIMULATED")
         XCTAssertEqual(demo.tableLabel, "TABLE ESTIMATED")
         XCTAssertEqual(demo.instruction, "Recalibration required.")
+    }
+
+    // Break caught: forwarding a Demo action unconditionally renders an inert
+    // Demo Mode button during live hand-tracking sessions.
+    func testSheepDropHUDOnlyOffersDemoActionInDemoMode() {
+        let actionTitle = "Open hand near spawn (Demo Mode)"
+        let live = SheepDropHUDPresentation(
+            phase: .waitingForHand,
+            pauseReason: nil,
+            provenance: .live,
+            tableSource: .detected,
+            isOverPen: false,
+            requestedDemoActionTitle: actionTitle
+        )
+        let demo = SheepDropHUDPresentation(
+            phase: .waitingForHand,
+            pauseReason: nil,
+            provenance: .demo,
+            tableSource: .estimated,
+            isOverPen: false,
+            requestedDemoActionTitle: actionTitle
+        )
+
+        XCTAssertNil(live.demoActionTitle)
+        XCTAssertEqual(demo.demoActionTitle, actionTitle)
     }
 
     // Break caught: a Demo button can bypass the grasp/release processor and

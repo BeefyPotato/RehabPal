@@ -1,6 +1,8 @@
 import RealityKitContent
 import RealityKit
+import simd
 import XCTest
+@testable import RehabPal
 
 final class AssetCatalogTests: XCTestCase {
     @MainActor
@@ -62,5 +64,38 @@ final class AssetCatalogTests: XCTestCase {
     func testCC0SheepUSDZCanLoadFromApplicationBundle() async throws {
         let sheep = try await Entity(named: "Sheep", in: .main)
         XCTAssertFalse(sheep.children.isEmpty)
+    }
+
+    @MainActor
+    func testSheepDropVisibleModelSelectsAndFitsOnlySheepHierarchy() async throws {
+        let importedScene = try await Entity(named: "Sheep", in: .main)
+
+        XCTAssertNotNil(importedScene.findEntity(named: "RootNode"))
+        XCTAssertNotNil(importedScene.findEntity(named: "Cube"))
+        XCTAssertNotNil(importedScene.findEntity(named: "Camera"))
+        XCTAssertNotNil(importedScene.findEntity(named: "Light"))
+        XCTAssertNotNil(importedScene.findEntity(named: "env_light"))
+
+        let visibleSheep = try XCTUnwrap(
+            SheepDropAsset.makeVisibleModel(from: importedScene)
+        )
+
+        XCTAssertEqual(visibleSheep.name, "SheepVisible")
+        XCTAssertNotNil(visibleSheep.findEntity(named: "RootNode"))
+        XCTAssertNotNil(visibleSheep.findEntity(named: "AnimalArmature"))
+        XCTAssertNotNil(visibleSheep.findEntity(named: "Sheep"))
+        XCTAssertNil(visibleSheep.findEntity(named: "Cube"))
+        XCTAssertNil(visibleSheep.findEntity(named: "Camera"))
+        XCTAssertNil(visibleSheep.findEntity(named: "Light"))
+        XCTAssertNil(visibleSheep.findEntity(named: "env_light"))
+
+        let bounds = visibleSheep.visualBounds(relativeTo: visibleSheep)
+        XCTAssertEqual(bounds.center.x, 0, accuracy: 0.000_1)
+        XCTAssertEqual(bounds.center.y, 0, accuracy: 0.000_1)
+        XCTAssertEqual(bounds.center.z, 0, accuracy: 0.000_1)
+        XCTAssertLessThanOrEqual(
+            simd_length(bounds.extents) / 2,
+            SheepDropSceneConfiguration.sheepCollisionRadius + 0.000_1
+        )
     }
 }
