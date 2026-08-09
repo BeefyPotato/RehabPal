@@ -150,6 +150,14 @@ struct HandJointFrame: Sendable {
     }
 }
 
+/// A coordinator-published tracking poll. Its sequence lets consumers process
+/// a present or missing frame once even when RealityKit renders it repeatedly.
+struct HandJointFrameObservation: Sendable {
+    let sequence: Int
+    let timestamp: TimeInterval
+    let frame: HandJointFrame?
+}
+
 /// Captures the tracked wrist orientation only when the wrist and all four
 /// level knuckles are present, preventing a partial hand from becoming neutral.
 struct WristNeutralCalibration: Sendable {

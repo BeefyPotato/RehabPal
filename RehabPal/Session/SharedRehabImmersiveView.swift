@@ -26,6 +26,22 @@ struct SharedRehabImmersiveView: View {
                     onProgress: session.accept,
                     onComplete: finishSqueeze
                 )
+            } else if let request = session.activeRequest,
+                      request.experience == .wristAssessment {
+                WristDiagnosticImmersiveView(
+                    request: request,
+                    coordinator: session,
+                    onProgress: session.accept,
+                    onComplete: finishWristAssessment
+                )
+            } else if let request = session.activeRequest,
+                      request.experience == .handAssessment {
+                FingerDiagnosticImmersiveView(
+                    request: request,
+                    coordinator: session,
+                    onProgress: session.accept,
+                    onComplete: finishHandAssessment
+                )
             } else {
                 RealityView { content in
                     let root = Entity()
@@ -42,5 +58,13 @@ struct SharedRehabImmersiveView: View {
 
     private func finishSqueeze(_ result: GameplayResult) {
         _ = session.finish(with: .gameplay(result))
+    }
+
+    private func finishWristAssessment(_ result: AssessmentResult.WristResult) {
+        _ = session.finish(with: .wristAssessment(result))
+    }
+
+    private func finishHandAssessment(_ result: [HandDigit: DigitROMSummary]) {
+        _ = session.finish(with: .handAssessment(result))
     }
 }

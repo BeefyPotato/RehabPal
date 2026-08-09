@@ -50,16 +50,11 @@ struct ContentView: View {
                 case .wristAssessment:
                     WristAssessmentView(
                         useDemoFallback: session.isUsingDemoMode
-                    ) { result in
-                        complete(.wristAssessment(result))
-                    }
+                    )
                 case .handAssessment:
                     HandROMAssessmentView(
-                        useDemoFallback: session.isUsingDemoMode,
-                        liveObservation: session.compatibilityObservation
-                    ) { result in
-                        complete(.handAssessment(result))
-                    }
+                        useDemoFallback: session.isUsingDemoMode
+                    )
                 case .symptoms:
                     SymptomCheckView(state: state)
                 case .report:
@@ -179,7 +174,7 @@ struct ContentView: View {
             return RehabSessionRequest(
                 experience: .wristAssessment,
                 prescription: state.prescription,
-                goal: state.prescription.assessmentAttemptsPerDirection * WristDirection.allCases.count + state.prescription.assessmentAttemptsPerDirection
+                goal: state.prescription.assessmentAttemptsPerDirection * WristAssessmentTarget.allCases.count
             )
         case .handAssessment:
             return RehabSessionRequest(
@@ -271,17 +266,6 @@ struct ContentView: View {
             }
             try? await Task.sleep(for: .milliseconds(50))
         }
-    }
-
-    private func complete(_ payload: SessionOutcomePayload) {
-        guard let progress = session.progress else { return }
-        session.accept(SessionProgress(
-            completed: progress.goal,
-            goal: progress.goal,
-            partial: 0
-        ))
-        guard let outcome = session.finish(with: payload) else { return }
-        _ = state.route(outcome)
     }
 
     private func cancelCurrentExperience() {

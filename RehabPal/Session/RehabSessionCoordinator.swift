@@ -24,6 +24,8 @@ final class RehabSessionCoordinator {
     private let liveTracking: any LiveHandJointSession
     private var demoTracking: SyntheticMovementSource?
     private var trackingLossBeganAt: TimeInterval?
+    private var jointFrameObservationSequence = 0
+    private var pendingDiagnosticObservations: [HandJointFrameObservation] = []
 
     private(set) var phase: RehabSessionPhase = .idle
     private(set) var latestAcceptedJointFrame: HandJointFrame?
@@ -121,6 +123,7 @@ final class RehabSessionCoordinator {
         monitoringGeneration += 1
         cleanUpTracking()
         latestAcceptedJointFrame = nil
+        pendingDiagnosticObservations.removeAll(keepingCapacity: true)
         trackingLossBeganAt = nil
 
         guard request.affectedHand == prescription.affectedHand else {
@@ -134,7 +137,7 @@ final class RehabSessionCoordinator {
             ))
             return
         }
-        guard request.goal > 0 else {
+        guard request.hasValidGoal else {
             phase = .failed(SessionFailure(
                 request: request,
                 reason: .invalidGoal,
@@ -218,6 +221,19 @@ final class RehabSessionCoordinator {
             return
         }
 
+        jointFrameObservationSequence += 1
+        let observation = HandJointFrameObservation(
+            sequence: jointFrameObservationSequence,
+            timestamp: timestamp,
+            frame: frame
+        )
+        switch request.experience {
+        case .wristAssessment, .handAssessment:
+            pendingDiagnosticObservations.append(observation)
+        case .exercise:
+            break
+        }
+
         guard let frame, frame.isForAffectedHand(request.affectedHand) else {
             if trackingLossBeganAt == nil {
                 trackingLossBeganAt = timestamp
@@ -251,6 +267,14 @@ final class RehabSessionCoordinator {
         }
         trackingLossBeganAt = nil
         phase = .active(request: request, progress: pausedProgress, provenance: .live)
+    }
+
+    /// Returns every diagnostic tracking poll in publication order, then
+    /// clears the buffer so a render pass cannot consume one twice.
+    func consumeDiagnosticObservations() -> [HandJointFrameObservation] {
+        let observations = pendingDiagnosticObservations
+        pendingDiagnosticObservations.removeAll(keepingCapacity: true)
+        return observations
     }
 
     @discardableResult
@@ -295,6 +319,7 @@ final class RehabSessionCoordinator {
     func cancel() {
         cleanUpTracking()
         latestAcceptedJointFrame = nil
+        pendingDiagnosticObservations.removeAll(keepingCapacity: true)
         trackingLossBeganAt = nil
         phase = .idle
     }
@@ -319,6 +344,18 @@ final class RehabSessionCoordinator {
             reason: reason,
             recoveryActions: [.retryLive, .enterDemoMode, .cancel]
         ))
+    }
+}
+
+private extension RehabSessionRequest {
+    var hasValidGoal: Bool {
+        guard goal > 0 else { return false }
+        switch experience {
+        case .exercise:
+            return true
+        case .wristAssessment, .handAssessment:
+            return goal.isMultiple(of: 5)
+        }
     }
 }
 

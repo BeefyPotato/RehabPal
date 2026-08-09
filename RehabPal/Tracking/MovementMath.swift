@@ -26,14 +26,21 @@ enum MovementMath {
     /// Returns calibrated wrist pitch and roll, with world-y yaw removed before
     /// extracting the two tray-control axes.
     nonisolated static func wristTilt(relativeTransform: simd_float4x4) -> WristTilt {
+        let tilt = wristTiltUnclamped(relativeTransform: relativeTransform)
+        return WristTilt(
+            pitch: simd_clamp(tilt.pitch, -maximumWristTilt, maximumWristTilt),
+            roll: simd_clamp(tilt.roll, -maximumWristTilt, maximumWristTilt)
+        )
+    }
+
+    /// Diagnostic wrist motion is measured without the gameplay safety clamp so
+    /// movement outside a prescribed assessment tolerance remains observable.
+    nonisolated static func wristTiltUnclamped(relativeTransform: simd_float4x4) -> WristTilt {
         let yaw = atan2(relativeTransform.columns.2.x, relativeTransform.columns.2.z)
         let withoutYaw = simd_mul(yawRotation(-yaw), relativeTransform)
         let pitch = asin(simd_clamp(-withoutYaw.columns.2.y, -1, 1))
         let roll = atan2(withoutYaw.columns.0.y, withoutYaw.columns.1.y)
-        return WristTilt(
-            pitch: simd_clamp(pitch, -maximumWristTilt, maximumWristTilt),
-            roll: simd_clamp(roll, -maximumWristTilt, maximumWristTilt)
-        )
+        return WristTilt(pitch: pitch, roll: roll)
     }
 
     /// Compares yaw-free world orientations so a world-y rotation remains yaw
@@ -43,6 +50,16 @@ enum MovementMath {
         current: simd_float4x4
     ) -> WristTilt {
         wristTilt(relativeTransform: relativeTransform(
+            reference: removingWorldYaw(reference),
+            current: removingWorldYaw(current)
+        ))
+    }
+
+    nonisolated static func wristTiltUnclamped(
+        reference: simd_float4x4,
+        current: simd_float4x4
+    ) -> WristTilt {
+        wristTiltUnclamped(relativeTransform: relativeTransform(
             reference: removingWorldYaw(reference),
             current: removingWorldYaw(current)
         ))

@@ -67,6 +67,29 @@ final class RehabSessionCoordinatorTests: XCTestCase {
     }
 
     @MainActor
+    func testCoordinatorRejectsDiagnosticGoalThatCannotBeDistributedAcrossFiveTargets() async {
+        let live = TestLiveJointSource()
+        let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
+        let request = RehabSessionRequest(
+            experience: .wristAssessment,
+            prescription: .demo,
+            goal: 6
+        )
+
+        await coordinator.startLive(request)
+
+        XCTAssertEqual(
+            coordinator.phase,
+            .failed(SessionFailure(
+                request: request,
+                reason: .invalidGoal,
+                recoveryActions: [.cancel]
+            ))
+        )
+        XCTAssertEqual(live.startCount, 0)
+    }
+
+    @MainActor
     func testLiveStartupPublishesTypedProgressAndLiveOutcomeProvenance() async {
         let live = TestLiveJointSource()
         let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: live)
@@ -214,6 +237,30 @@ final class RehabSessionCoordinatorTests: XCTestCase {
     }
 
     @MainActor
+    func testCoordinatorBuffersEveryDiagnosticObservationUntilConsumed() async {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource()
+        )
+        let request = RehabSessionRequest(
+            experience: .handAssessment,
+            prescription: .demo,
+            goal: 10
+        )
+        await coordinator.startLive(request)
+
+        coordinator.receiveJointFrame(nil, at: 1)
+        coordinator.receiveJointFrame(trackedFrame(hand: .right, at: 1.05), at: 1.05)
+
+        let observations = coordinator.consumeDiagnosticObservations()
+        XCTAssertEqual(observations.count, 2)
+        XCTAssertNil(observations[0].frame)
+        XCTAssertEqual(observations[1].frame?.timestamp, 1.05)
+        XCTAssertLessThan(observations[0].sequence, observations[1].sequence)
+        XCTAssertTrue(coordinator.consumeDiagnosticObservations().isEmpty)
+    }
+
+    @MainActor
     func testCurrentFrameAndCompatibilityObservationNeverBypassAffectedHandAcceptance() async {
         let live = TestLiveJointSource()
         live.latestJointFrame = trackedFrame(hand: .left, at: 1)
@@ -258,6 +305,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(live.stopCount, 1)
         XCTAssertNil(coordinator.activeRequest)
         XCTAssertNil(coordinator.latestAcceptedJointFrame)
+        XCTAssertTrue(coordinator.consumeDiagnosticObservations().isEmpty)
     }
 
     @MainActor
