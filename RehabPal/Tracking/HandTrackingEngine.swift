@@ -25,15 +25,16 @@ struct TrackingProviderStateUpdate: Equatable, Sendable {
 @MainActor
 @Observable
 final class HandTrackingEngine: MovementObservationSource {
-    private let session: ARKitSession?
-    private let provider: HandTrackingProvider?
-    private let worldTracking: WorldTrackingProvider?
-    private let planeDetection: PlaneDetectionProvider?
+    private var session: ARKitSession?
+    private var provider: HandTrackingProvider?
+    private var worldTracking: WorldTrackingProvider?
+    private var planeDetection: PlaneDetectionProvider?
     private let tableSurfaceUpdates: (@MainActor () -> AsyncStream<TableSurfaceUpdate>)?
     private let providerStateUpdates: (@MainActor () -> AsyncStream<TrackingProviderStateUpdate>)?
     private let supported: Bool
     private let runSession: @MainActor () async throws -> Void
     private let stopSession: @MainActor () -> Void
+    private let usesProductionRuntime: Bool
 
     private var updateTask: Task<Void, Never>?
     private var planeUpdateTask: Task<Void, Never>?
@@ -53,25 +54,18 @@ final class HandTrackingEngine: MovementObservationSource {
     let isFallback = false
 
     init() {
-        let session = ARKitSession()
-        let provider = HandTrackingProvider()
-        let worldTracking = WorldTrackingProvider()
-        let planeDetection = PlaneDetectionProvider(alignments: [.horizontal])
-        self.session = session
-        self.provider = provider
-        self.worldTracking = worldTracking
-        self.planeDetection = planeDetection
+        session = nil
+        provider = nil
+        worldTracking = nil
+        planeDetection = nil
         tableSurfaceUpdates = nil
         providerStateUpdates = nil
         supported = HandTrackingProvider.isSupported &&
             WorldTrackingProvider.isSupported &&
             PlaneDetectionProvider.isSupported
-        runSession = {
-            try await session.run([provider, worldTracking, planeDetection])
-        }
-        stopSession = {
-            session.stop()
-        }
+        usesProductionRuntime = true
+        runSession = {}
+        stopSession = {}
     }
 
     /// Injectable session boundary used to prove cancellation and generation
@@ -88,6 +82,7 @@ final class HandTrackingEngine: MovementObservationSource {
         worldTracking = nil
         planeDetection = nil
         supported = isSupported
+        usesProductionRuntime = false
         self.runSession = runSession
         self.stopSession = stopSession
         self.tableSurfaceUpdates = tableSurfaceUpdates
@@ -115,10 +110,34 @@ final class HandTrackingEngine: MovementObservationSource {
 
         startupGeneration += 1
         let generation = startupGeneration
+        activeGeneration = nil
+        isRunning = false
+        cancelUpdateTasks()
+        if usesProductionRuntime {
+            session?.stop()
+            session = nil
+            provider = nil
+            worldTracking = nil
+            planeDetection = nil
+            let freshSession = ARKitSession()
+            let freshHand = HandTrackingProvider()
+            let freshWorld = WorldTrackingProvider()
+            let freshPlane = PlaneDetectionProvider(alignments: [.horizontal])
+            session = freshSession
+            provider = freshHand
+            worldTracking = freshWorld
+            planeDetection = freshPlane
+        }
+        clearPublishedFrames(at: ProcessInfo.processInfo.systemUptime)
         clearPublishedTable()
 
         do {
-            try await runSession()
+            if usesProductionRuntime,
+               let session, let provider, let worldTracking, let planeDetection {
+                try await session.run([provider, worldTracking, planeDetection])
+            } else {
+                try await runSession()
+            }
         } catch {
             guard generation == startupGeneration else {
                 throw CancellationError()
@@ -151,6 +170,21 @@ final class HandTrackingEngine: MovementObservationSource {
         startupGeneration += 1
         activeGeneration = nil
         isRunning = false
+        cancelUpdateTasks()
+        if usesProductionRuntime {
+            session?.stop()
+            session = nil
+            provider = nil
+            worldTracking = nil
+            planeDetection = nil
+        } else {
+            stopSession()
+        }
+        clearPublishedFrames(at: ProcessInfo.processInfo.systemUptime)
+        clearPublishedTable()
+    }
+
+    private func cancelUpdateTasks() {
         updateTask?.cancel()
         updateTask = nil
         eventTask?.cancel()
@@ -159,9 +193,6 @@ final class HandTrackingEngine: MovementObservationSource {
         planeUpdateTask = nil
         tableFallbackTask?.cancel()
         tableFallbackTask = nil
-        stopSession()
-        clearPublishedFrames(at: ProcessInfo.processInfo.systemUptime)
-        clearPublishedTable()
     }
 
     func jointFrame(for hand: AffectedHand) -> HandJointFrame? {
@@ -461,16 +492,17 @@ final class HandTrackingEngine: MovementObservationSource {
         startupGeneration += 1
         activeGeneration = nil
         isRunning = false
-        updateTask?.cancel()
-        updateTask = nil
-        eventTask?.cancel()
-        eventTask = nil
-        planeUpdateTask?.cancel()
-        planeUpdateTask = nil
-        tableFallbackTask?.cancel()
-        tableFallbackTask = nil
+        cancelUpdateTasks()
         if stopUnderlyingSession {
-            stopSession()
+            if usesProductionRuntime {
+                session?.stop()
+                session = nil
+                provider = nil
+                worldTracking = nil
+                planeDetection = nil
+            } else {
+                stopSession()
+            }
         }
         clearPublishedFrames(at: ProcessInfo.processInfo.systemUptime)
         clearPublishedTable()

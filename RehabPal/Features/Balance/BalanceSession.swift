@@ -52,6 +52,30 @@ enum BalanceReferenceRotation {
     }
 }
 
+struct BalanceRenderRotationState: Sendable {
+    private(set) var latestDelta: simd_quatf?
+
+    mutating func retain(_ rotation: BalanceRotation) {
+        latestDelta = rotation.quaternion
+    }
+
+    func nextOrientation(from current: simd_quatf) -> simd_quatf? {
+        latestDelta.map { BalanceReferenceRotation.smoothed(current: current, delta: $0) }
+    }
+}
+
+enum BalanceRenderPolling {
+    static func shouldPoll(isDemo: Bool, phase: RehabSessionPhase) -> Bool {
+        guard !isDemo else { return false }
+        switch phase {
+        case let .active(request, _, _), let .paused(request, _, _):
+            return request.experience == .exercise(.balance)
+        case .idle, .starting, .completed, .failed:
+            return false
+        }
+    }
+}
+
 enum BalanceEvent: Equatable, Sendable {
     case waitingForCalibration
     case paused

@@ -155,6 +155,7 @@ struct BalancePlatformView: View {
     @State private var demoSource: SyntheticMovementSource
     @State private var nextDemoCalibrationTimestamp: TimeInterval = 1.0 / 60.0
     @State private var placementLatch = BalancePlatformPlacementLatch()
+    @State private var renderRotation = BalanceRenderRotationState()
 
     private let hudOffset = SIMD3<Float>(0, 0.28, 0.1)
     private let trayRadius: Float = 0.12
@@ -261,6 +262,12 @@ struct BalancePlatformView: View {
 
     private func gameStep(_ deltaTime: TimeInterval) {
         coordinator.updateRequiredJoints(game.requiredJoints)
+        if BalanceRenderPolling.shouldPoll(
+            isDemo: coordinator.isUsingDemoMode,
+            phase: coordinator.phase
+        ) {
+            coordinator.pollLiveTracking(at: ProcessInfo.processInfo.systemUptime)
+        }
         if processRecalibrationIfNeeded() {
             return
         }
@@ -276,6 +283,7 @@ struct BalancePlatformView: View {
             freezeBall()
             return
         }
+        defer { applyRetainedTrayRotation() }
 
         if respawnCountdown > 0 {
             respawnCountdown -= deltaTime
@@ -358,14 +366,14 @@ struct BalancePlatformView: View {
         case .waitingForCalibration, .paused:
             freezeBall()
         case let .active(tilt):
-            applyTrayTilt(tilt)
+            renderRotation.retain(tilt)
             setBallDynamic(true)
         case let .resetBall(tilt):
-            applyTrayTilt(tilt)
+            renderRotation.retain(tilt)
             placeBallAtStart()
             setBallDynamic(true)
         case let .scored(_, _, tilt, isComplete):
-            applyTrayTilt(tilt)
+            renderRotation.retain(tilt)
             guard allowScore else { return }
             ballActive = false
             ball.isEnabled = false
@@ -379,11 +387,8 @@ struct BalancePlatformView: View {
         }
     }
 
-    private func applyTrayTilt(_ rotation: BalanceRotation) {
-        let smoothed = BalanceReferenceRotation.smoothed(
-            current: tray.orientation,
-            delta: rotation.quaternion
-        )
+    private func applyRetainedTrayRotation() {
+        guard let smoothed = renderRotation.nextOrientation(from: tray.orientation) else { return }
         var transform = Transform()
         transform.translation = trayPosition
         transform.rotation = smoothed

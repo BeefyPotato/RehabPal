@@ -49,3 +49,18 @@ Date: 2026-08-10
 No Vision Pro runtime claim is made. On-device follow-up should confirm targeted
 entity acquisition, comfortable drag reach, release physics, and perceived tray
 rotation under the prescribed affected hand.
+
+## Physical regression follow-up
+
+- Production tracking now creates a fresh `ARKitSession`, hand provider, world
+  provider, and plane provider for every start generation. Stop, cancellation,
+  and supersession cancel update tasks, stop the prior session, and discard all
+  prior provider objects before another run, preventing ARKit provider reuse on
+  the second exercise. Injected boundaries remain available for tests; lifecycle
+  regressions prove start-stop-start separation and stale-stream rejection.
+- Live Balance polls the coordinator source on each RealityKit render update.
+  Unique frame chronology still gates calibration, scoring, and resets, while a
+  render-cadence state retains the newest full reference quaternion delta and
+  reapplies the unchanged 0.08 smoothing step every render. This matches test8-2
+  cadence and explains the previously delayed ball response without adding a
+  non-reference physics wake workaround.

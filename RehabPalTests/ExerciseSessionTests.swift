@@ -4,6 +4,50 @@ import simd
 
 @MainActor
 final class ExerciseSessionTests: XCTestCase {
+    // Mutation caught: smoothing only on a new processor frame leaves the tray
+    // and physics ball waiting at the coordinator's 50 ms polling cadence.
+    func testBalanceRenderCadenceContinuesTowardRetainedTargetEveryTick() {
+        var state = BalanceRenderRotationState()
+        let delta = simd_quatf(angle: 0.7, axis: simd_normalize(SIMD3<Float>(1, 2, 3)))
+        state.retain(BalanceRotation(quaternion: delta))
+        let first = state.nextOrientation(from: BalanceRotation.identity.quaternion)!
+        let second = state.nextOrientation(from: first)!
+        XCTAssertGreaterThan(abs(first.angle), 0)
+        XCTAssertGreaterThan(abs(second.angle), abs(first.angle))
+    }
+
+    // Mutation caught: keeping the first delta after a newer anchor arrives
+    // makes render smoothing chase stale hand orientation.
+    func testBalanceRenderCadenceReplacesRetainedTargetWithoutProcessingDuplicates() {
+        var state = BalanceRenderRotationState()
+        let first = simd_quatf(angle: 0.5, axis: [1, 0, 0])
+        let replacement = simd_quatf(angle: 0.4, axis: [0, 0, 1])
+        state.retain(BalanceRotation(quaternion: first))
+        state.retain(BalanceRotation(quaternion: replacement))
+        let actual = state.nextOrientation(from: BalanceRotation.identity.quaternion)!
+        let expected = BalanceReferenceRotation.smoothed(
+            current: BalanceRotation.identity.quaternion,
+            delta: replacement
+        )
+        XCTAssertEqual(abs(simd_dot(actual.vector, expected.vector)), 1, accuracy: 0.0001)
+    }
+
+    func testBalanceRenderPollingIsLiveBalanceSpecificForActiveAndPaused() {
+        let request = RehabSessionRequest(experience: .exercise(.balance), prescription: .demo)
+        let progress = SessionProgress(completed: 0, goal: request.goal, partial: 0)
+        XCTAssertTrue(BalanceRenderPolling.shouldPoll(
+            isDemo: false,
+            phase: .active(request: request, progress: progress, provenance: .live)
+        ))
+        XCTAssertTrue(BalanceRenderPolling.shouldPoll(
+            isDemo: false,
+            phase: .paused(request: request, progress: progress, reason: .trackingLost(requiresRecalibration: false))
+        ))
+        XCTAssertFalse(BalanceRenderPolling.shouldPoll(
+            isDemo: true,
+            phase: .active(request: request, progress: progress, provenance: .demo)
+        ))
+    }
     // Break caught: adding a new exercise without its clinician-prescribed goal
     // can route it through the shared session with an unrelated dose.
     func testSheepDropUsesItsPrescribedExerciseContract() {

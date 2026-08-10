@@ -4,6 +4,37 @@ import simd
 
 @MainActor
 final class HandTrackingEngineTests: XCTestCase {
+    // Mutation caught: reusing one production runtime across start-stop-start
+    // collapses two generations and lets stale provider work publish again.
+    func testStartStopStartOwnsDistinctRuntimeGenerationsAndCurrentUpdates() async throws {
+        let tables = TableUpdateBoundary()
+        var starts = 0
+        var stops = 0
+        let engine = HandTrackingEngine(
+            isSupported: true,
+            runSession: { starts += 1 },
+            stopSession: { stops += 1 },
+            tableSurfaceUpdates: { tables.makeStream() }
+        )
+
+        try await engine.start()
+        engine.stop()
+        try await engine.start()
+        XCTAssertEqual(starts, 2)
+        XCTAssertEqual(stops, 1)
+
+        let stale = tableSurface(id: UUID(), x: -0.3, timestamp: 10)
+        tables.yield(.added(stale), to: 0)
+        await Task.yield()
+        XCTAssertNil(engine.tablePlacement)
+
+        let current = tableSurface(id: UUID(), x: 0.3, timestamp: 20)
+        tables.yield(.added(current), to: 1)
+        tables.yield(.updated(current.with(timestamp: 20.4)), to: 1)
+        await waitUntil { engine.tablePlacement != nil }
+        XCTAssertEqual(engine.tablePlacement?.transform.translation.x, 0.3)
+    }
+
     // Break caught: the injectable startup path could invoke ARKit even after
     // the engine had already reported the provider combination unsupported.
     func testUnsupportedEngineRejectsStartWithoutRunningSession() async {
