@@ -53,6 +53,31 @@ final class TableSurfaceTests: XCTestCase {
         XCTAssertEqual(placement?.transform.translation, [0, 0.73, -0.55])
     }
 
+    // Break caught: publishing the plane anchor's center or rotation can put
+    // the Sheep Drop scene off to one side or rotate it out of reach.
+    func testDetectedPlacementUsesOnlyPlaneHeight() {
+        var selector = TableSurfaceSelector(scanStartedAt: 10)
+        let surface = makeSurface(
+            x: 2.4,
+            height: 0.82,
+            z: -3.1,
+            normalDegrees: 4,
+            timestamp: 10
+        )
+
+        XCTAssertNil(selector.receive(.added(surface), at: 10))
+        let placement = selector.receive(
+            .updated(surface.with(timestamp: 10.35)),
+            at: 10.35
+        )
+
+        XCTAssertEqual(placement?.source, .detected)
+        XCTAssertEqual(placement?.transform.translation, [0, 0.82, -0.55])
+        XCTAssertEqual(placement?.transform.columns.0, [1, 0, 0, 0])
+        XCTAssertEqual(placement?.transform.columns.1, [0, 1, 0, 0])
+        XCTAssertEqual(placement?.transform.columns.2, [0, 0, 1, 0])
+    }
+
     // Break caught: height motion larger than 1.5 cm could count toward the
     // original stability interval instead of restarting it.
     func testHeightDriftAboveLimitRestartsStabilityWindow() {
@@ -151,24 +176,21 @@ final class TableSurfaceTests: XCTestCase {
     // actually satisfied the complete stability rule.
     func testFirstStableCandidateRemainsAutomaticallySelected() {
         var selector = TableSurfaceSelector(scanStartedAt: 10)
-        let first = makeSurface(x: -0.20, timestamp: 10)
-        let second = makeSurface(x: 0.20, timestamp: 10.10)
+        let first = makeSurface(x: -0.20, height: 0.74, timestamp: 10)
+        let second = makeSurface(x: 0.20, height: 0.76, timestamp: 10.10)
 
         XCTAssertNil(selector.receive(.added(first), at: 10))
         XCTAssertNil(selector.receive(.added(second), at: 10.10))
-        XCTAssertEqual(
-            selector.receive(
-                .updated(second.with(timestamp: 10.45)),
-                at: 10.45
-            )?.transform.translation.x,
-            0.20
-        )
+        XCTAssertEqual(selector.receive(
+            .updated(second.with(timestamp: 10.45)),
+            at: 10.45
+        )?.transform.translation.y, 0.76)
         XCTAssertEqual(
             selector.receive(
                 .updated(first.with(timestamp: 10.50)),
                 at: 10.50
-            )?.transform.translation.x,
-            0.20
+            )?.transform.translation.y,
+            0.76
         )
     }
 
@@ -194,21 +216,21 @@ final class TableSurfaceTests: XCTestCase {
             selector.receive(
                 .updated(surface.with(timestamp: 10.35)),
                 at: 10.35
-            )?.transform.translation.x,
-            0
+            )?.transform.translation.y,
+            0.73
         )
 
-        let moved = makeSurface(id: surface.id, x: 0.05, timestamp: 10.40)
+        let moved = makeSurface(id: surface.id, height: 0.74, timestamp: 10.40)
         XCTAssertEqual(
-            selector.receive(.updated(moved), at: 10.40)?.transform.translation.x,
-            0.05
+            selector.receive(.updated(moved), at: 10.40)?.transform.translation.y,
+            0.74
         )
         selector.lock()
-        let movedAgain = makeSurface(id: surface.id, x: 0.10, timestamp: 10.45)
+        let movedAgain = makeSurface(id: surface.id, height: 0.745, timestamp: 10.45)
 
         XCTAssertEqual(
-            selector.receive(.updated(movedAgain), at: 10.45)?.transform.translation.x,
-            0.05
+            selector.receive(.updated(movedAgain), at: 10.45)?.transform.translation.y,
+            0.74
         )
     }
 
@@ -250,6 +272,7 @@ final class TableSurfaceTests: XCTestCase {
         id: UUID = UUID(),
         x: Float = 0,
         height: Float = 0.73,
+        z: Float = -0.55,
         normalDegrees: Float = 0,
         extent: SIMD2<Float> = [1.0, 0.7],
         timestamp: TimeInterval,
@@ -261,7 +284,7 @@ final class TableSurfaceTests: XCTestCase {
                 axis: [1, 0, 0]
             )
         )
-        transform.columns.3 = SIMD4<Float>(x, height, -0.55, 1)
+        transform.columns.3 = SIMD4<Float>(x, height, z, 1)
         return DetectedTableSurface(
             id: id,
             timestamp: timestamp,

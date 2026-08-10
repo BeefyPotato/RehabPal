@@ -153,12 +153,26 @@ private extension SheepDropPhase {
 }
 
 enum SheepDropAsset {
+    /// The CC0 USDZ declares Z-up and the model faces source -Y. RealityKit is
+    /// Y-up; after standing it upright, yaw it so its head points from the
+    /// positive-X spawn pad toward the pen at the origin.
+    static let sourceToPenOrientation =
+        simd_quatf(angle: -.pi / 2, axis: [0, 1, 0]) *
+        simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
+
     @MainActor
     static func makeVisibleModel(from importedScene: Entity) -> Entity? {
         guard let sheepHierarchy = importedScene.findEntity(named: "RootNode") else {
             return nil
         }
-        let bounds = sheepHierarchy.visualBounds(relativeTo: sheepHierarchy)
+        sheepHierarchy.removeFromParent()
+        sheepHierarchy.orientation = sourceToPenOrientation
+
+        let visibleSheep = Entity()
+        visibleSheep.name = "SheepVisible"
+        visibleSheep.addChild(sheepHierarchy)
+
+        let bounds = sheepHierarchy.visualBounds(relativeTo: visibleSheep)
         let halfDiagonal = simd_length(bounds.extents) / 2
         guard halfDiagonal.isFinite, halfDiagonal > .ulpOfOne,
               bounds.center.x.isFinite, bounds.center.y.isFinite,
@@ -167,13 +181,13 @@ enum SheepDropAsset {
         }
 
         let scale = SheepDropSceneConfiguration.sheepVisibleRadius / halfDiagonal
-        sheepHierarchy.removeFromParent()
         sheepHierarchy.scale = SIMD3<Float>(repeating: scale)
-        sheepHierarchy.position = -bounds.center * scale
-
-        let visibleSheep = Entity()
-        visibleSheep.name = "SheepVisible"
-        visibleSheep.addChild(sheepHierarchy)
+        let scaledBottom = (bounds.center.y - bounds.extents.y / 2) * scale
+        sheepHierarchy.position = [
+            -bounds.center.x * scale,
+            -SheepDropSceneConfiguration.sheepCollisionRadius - scaledBottom,
+            -bounds.center.z * scale
+        ]
         return visibleSheep
     }
 }

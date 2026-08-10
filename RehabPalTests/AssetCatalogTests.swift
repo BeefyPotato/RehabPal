@@ -96,11 +96,30 @@ final class AssetCatalogTests: XCTestCase {
 
         let bounds = visibleSheep.visualBounds(relativeTo: visibleSheep)
         XCTAssertEqual(bounds.center.x, 0, accuracy: 0.000_1)
-        XCTAssertEqual(bounds.center.y, 0, accuracy: 0.000_1)
         XCTAssertEqual(bounds.center.z, 0, accuracy: 0.000_1)
         XCTAssertLessThanOrEqual(
             simd_length(bounds.extents) / 2,
             SheepDropSceneConfiguration.sheepCollisionRadius + 0.000_1
         )
+        XCTAssertEqual(
+            bounds.center.y - bounds.extents.y / 2,
+            -SheepDropSceneConfiguration.sheepCollisionRadius,
+            accuracy: 0.000_1
+        )
+    }
+
+    // Break caught: loading the Z-up source hierarchy without a runtime
+    // wrapper rotation leaves the sheep on its head with its legs toward the viewer.
+    func testSheepRuntimeOrientationMapsUpAndHeadTowardPen() {
+        let orientation = SheepDropAsset.sourceToPenOrientation
+        let worldUp = orientation.act([0, 0, 1])
+        let worldForward = orientation.act([0, -1, 0])
+
+        XCTAssertEqual(worldUp.x, 0, accuracy: 0.000_1)
+        XCTAssertEqual(worldUp.y, 1, accuracy: 0.000_1)
+        XCTAssertEqual(worldUp.z, 0, accuracy: 0.000_1)
+        XCTAssertEqual(worldForward.x, -1, accuracy: 0.000_1)
+        XCTAssertEqual(worldForward.y, 0, accuracy: 0.000_1)
+        XCTAssertEqual(worldForward.z, 0, accuracy: 0.000_1)
     }
 }

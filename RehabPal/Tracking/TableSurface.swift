@@ -28,6 +28,14 @@ struct TablePlacement: Equatable, Sendable {
         transform: simd_float4x4(translation: [0, 0.73, -0.55]),
         source: .estimated
     )
+
+    static func detectedReference(height: Float) -> TablePlacement {
+        let safeHeight = simd_clamp(height, 0.60, 0.95)
+        return TablePlacement(
+            transform: simd_float4x4(translation: [0, safeHeight, -0.55]),
+            source: .detected
+        )
+    }
 }
 
 struct TableSurfaceSelector: Sendable {
@@ -120,9 +128,8 @@ struct TableSurfaceSelector: Sendable {
                 return
             }
             self.selectedSurface = surface
-            currentPlacement = TablePlacement(
-                transform: surface.transform,
-                source: .detected
+            currentPlacement = .detectedReference(
+                height: surface.transform.translation.y
             )
             return
         }
@@ -148,9 +155,8 @@ struct TableSurfaceSelector: Sendable {
             return
         }
         selectedSurface = surface
-        currentPlacement = TablePlacement(
-            transform: surface.transform,
-            source: .detected
+        currentPlacement = .detectedReference(
+            height: surface.transform.translation.y
         )
     }
 
