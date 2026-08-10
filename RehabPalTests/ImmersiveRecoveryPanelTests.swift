@@ -25,6 +25,30 @@ final class ImmersiveRecoveryPanelTests: XCTestCase {
         XCTAssertTrue(long.canRecalibrate)
     }
 
+    // Mutation caught: showing a disabled Recalibrate button before the
+    // processor is ready invites repeated taps and contradicts the prompt.
+    func testLongLossHidesRecalibrateUntilReadyThenShowsItEnabled() throws {
+        let request = RehabSessionRequest(experience: .exercise(.balance), prescription: .demo)
+        let phase = RehabSessionPhase.paused(
+            request: request,
+            progress: SessionProgress(completed: 2, goal: request.goal, partial: 0),
+            reason: .trackingLost(requiresRecalibration: true)
+        )
+        let notReady = try XCTUnwrap(ImmersiveRecoveryPresentation.make(
+            phase: phase,
+            canConfirmRecalibration: false
+        ))
+        XCTAssertFalse(notReady.showsRecalibrate)
+        XCTAssertFalse(notReady.canRecalibrate)
+
+        let ready = try XCTUnwrap(ImmersiveRecoveryPresentation.make(
+            phase: phase,
+            canConfirmRecalibration: true
+        ))
+        XCTAssertTrue(ready.showsRecalibrate)
+        XCTAssertTrue(ready.canRecalibrate)
+    }
+
     func testRecoveryInstructionsAreExperienceSpecificAndAbsentOutsidePause() {
         let experiences: [RehabExperience] = [
             .exercise(.balance), .exercise(.squeeze), .exercise(.sheepDrop),

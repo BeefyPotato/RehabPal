@@ -22,7 +22,7 @@ struct ImmersiveRecoveryPresentation: Equatable, Sendable {
                 : "Hand tracking lost",
             progressLabel: "Completed \(progress.completed) / Goal \(progress.goal)",
             instruction: instruction(for: request.experience),
-            showsRecalibrate: requiresRecalibration,
+            showsRecalibrate: requiresRecalibration && canConfirmRecalibration,
             canRecalibrate: requiresRecalibration && canConfirmRecalibration,
             replacesNormalInstruction: true
         )

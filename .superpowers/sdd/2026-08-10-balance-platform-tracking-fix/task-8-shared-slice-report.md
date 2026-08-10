@@ -22,9 +22,11 @@
 - Balance, Squeeze, Sheep Drop, wrist diagnostic, and finger diagnostic attachments now render the recovery panel above their HUD in one vertical stack with explicit spacing.
 - Each normal phase instruction is suppressed during recovery; progress and assisted-progress controls remain visible.
 - Recalibrate routes to `confirmRecalibration()` and is enabled only when the coordinator reports readiness.
+- Recalibrate remains hidden during long-loss preparation and appears enabled only once coordinator confirmation is ready; a mutation-named regression covers both states.
 - Back routes through the coordinator intent to ContentView's shared safe teardown.
 
 ## Remaining Acceptance
 
 - Add rendered/inspection-level UI coverage if a visionOS test worker becomes available.
+- Add broader action-invocation seams for per-HUD Back/Recalibrate callbacks when the UI test environment is reliable.
 - Perform physical Vision Pro acceptance of panel placement, safe dismissal, and assisted-button reachability during recovery.
