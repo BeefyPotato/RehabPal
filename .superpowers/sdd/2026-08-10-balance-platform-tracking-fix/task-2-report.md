@@ -76,3 +76,30 @@ Exit: 0
 ## Environmental Limitation
 
 A later bounded run of the complete `ExerciseSessionTests` target reached its 90-second process limit after Xcode 27 became stuck finalizing the simulator test log and launched a 600-second `simctl diagnose`. The partial `.xcresult` had no `Info.plist`, so no broader runtime result is claimed. This was treated as an environment/test-runner finalization issue rather than a passing or failing suite. The earlier bounded, serial seven-test chronology run completed normally with exit 0, and all final Task 2 tests compile in the focused generic test bundle.
+
+## Fix Round 1
+
+Review findings 1 and 2 were addressed with tests written before each production change:
+
+- `testBalanceBriefPauseClearsPartialCalibrationProgressAndTimestamp` catches preservation of an unfinished calibration streak across `pause(requiresRecalibration: false)`. Brief pause now resets partial progress and timestamp history only while uncalibrated; an established neutral is still retained.
+- `testBalanceInvalidDuplicateResetsProgressBeforeDuplicateSuppression` catches equality suppression running before pose validation. The existing neutral-pose capture predicate now validates first, so an invalid duplicate resets progress while an existing valid-duplicate test continues to require no increment.
+
+The attempted single-test simulator RED invocation encountered the same Xcode runner/finalization hang and was terminated. Further simulator attempts were stopped by task direction; runtime execution of these two fix-round tests is therefore **UNVERIFIED** and is not represented as green. Their reviewed pre-fix failure paths are direct: the first path left `calibrationProgress == 10` after brief pause, and the second returned on timestamp equality before reaching capture validation.
+
+Fresh deterministic verification after both fixes:
+
+```text
+xcodebuild build-for-testing -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'generic/platform=visionOS' \
+  -only-testing:RehabPalTests/ExerciseSessionTests \
+  -only-testing:RehabPalTests/JointFrameTests \
+  -derivedDataPath /private/tmp/RehabPalBalanceTask2Fix1FocusedBuild \
+  CODE_SIGNING_ALLOWED=NO
+Exit: 0
+
+xcodebuild build -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'generic/platform=visionOS' \
+  -derivedDataPath /private/tmp/RehabPalBalanceTask2Fix1App \
+  CODE_SIGNING_ALLOWED=NO
+Exit: 0
+```

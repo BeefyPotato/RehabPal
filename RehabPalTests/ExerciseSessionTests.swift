@@ -515,6 +515,30 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertTrue(session.isCalibrated)
     }
 
+    // Break caught: suppressing a duplicate before pose validation lets an
+    // invalid same-timestamp frame preserve an unfinished calibration streak.
+    func testBalanceInvalidDuplicateResetsProgressBeforeDuplicateSuppression() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        advanceBalanceCalibration(&session, through: 9)
+        XCTAssertEqual(session.calibrationProgress, 10)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(
+                    hand: .right,
+                    timestamp: 9,
+                    omit: .littleFingerKnuckle
+                ),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            ),
+            .waitingForCalibration
+        )
+
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+    }
+
     // Break caught: a missing frame between level-hand samples can leave the
     // old partial hold alive and calibrate from nonconsecutive observations.
     func testBalanceCalibrationMissingFrameResetsProgress() {
@@ -707,6 +731,40 @@ final class ExerciseSessionTests: XCTestCase {
             .resetBall(WristTilt(pitch: 0, roll: 0))
         )
         XCTAssertEqual(session.completedSuccesses, 0)
+    }
+
+    // Break caught: preserving partial calibration state across a brief pause
+    // lets two interrupted runs combine into the required consecutive hold.
+    func testBalanceBriefPauseClearsPartialCalibrationProgressAndTimestamp() {
+        var session = BalanceSession(prescription: .demo, seed: 12)
+        advanceBalanceCalibration(&session, through: 9)
+        XCTAssertEqual(session.calibrationProgress, 10)
+
+        session.pause(requiresRecalibration: false)
+
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+        for timestamp in 100..<124 {
+            XCTAssertEqual(
+                session.process(
+                    frame: calibratedFrame(hand: .right, timestamp: Double(timestamp)),
+                    ballPosition: BalanceTargetSchedule.ballStart,
+                    ballEscaped: false
+                ),
+                .waitingForCalibration
+            )
+        }
+        XCTAssertEqual(session.calibrationProgress, 24)
+        XCTAssertFalse(session.isCalibrated)
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .right, timestamp: 124),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            ),
+            .resetBall(WristTilt(pitch: 0, roll: 0))
+        )
+        XCTAssertTrue(session.isCalibrated)
     }
 
     // Break caught: a brief interruption can discard a valid neutral or resume

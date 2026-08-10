@@ -96,6 +96,8 @@ struct BalanceSession: Sendable {
         shouldResetOnResume = true
         if requiresRecalibration {
             clearCalibration()
+        } else if !isCalibrated {
+            resetCalibrationProgress()
         }
     }
 
@@ -120,6 +122,10 @@ struct BalanceSession: Sendable {
                 resetCalibrationProgress()
                 return .waitingForCalibration
             }
+            guard let captured = WristNeutralCalibration.capture(from: frame) else {
+                resetCalibrationProgress()
+                return .waitingForCalibration
+            }
             if let lastCalibrationTimestamp {
                 guard frame.timestamp >= lastCalibrationTimestamp else {
                     resetCalibrationProgress()
@@ -128,10 +134,6 @@ struct BalanceSession: Sendable {
                 guard frame.timestamp > lastCalibrationTimestamp else {
                     return .waitingForCalibration
                 }
-            }
-            guard let captured = WristNeutralCalibration.capture(from: frame) else {
-                resetCalibrationProgress()
-                return .waitingForCalibration
             }
 
             lastCalibrationTimestamp = frame.timestamp
