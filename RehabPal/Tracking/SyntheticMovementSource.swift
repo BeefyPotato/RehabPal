@@ -59,6 +59,10 @@ final class SyntheticMovementSource: MovementObservationSource {
         publishJointFrame()
     }
 
+    func setBalanceCalibrationPose(at timestamp: TimeInterval) {
+        setWrist(direction: .forward, progress: 0, at: timestamp)
+    }
+
     func setTrackingVisible(_ visible: Bool, at timestamp: TimeInterval) {
         if visible {
             latestObservation = MovementObservation(

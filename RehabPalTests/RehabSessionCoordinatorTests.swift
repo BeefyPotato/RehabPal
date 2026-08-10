@@ -454,6 +454,61 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.pauseReason)
     }
 
+    // Break caught: the Balance view can acknowledge long-loss calibration
+    // from a replayed retained frame, or reset the processor more than once.
+    @MainActor
+    func testBalanceLongLossLifecycleRequires25UniqueFramesAndAcknowledgesTheFinalTimestamp() async throws {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource()
+        )
+        let request = RehabSessionRequest(
+            experience: .exercise(.balance),
+            prescription: .demo
+        )
+        await coordinator.startLiveForTesting(request)
+        var game = BalanceSession(prescription: .demo, seed: 5)
+        var viewState = BalanceViewTrackingState()
+
+        coordinator.updateRequiredJoints(game.requiredJoints)
+        coordinator.receiveJointFrame(trackedFrame(hand: .right, at: 1), at: 1)
+        coordinator.receiveJointFrame(nil, at: 2)
+        coordinator.receiveJointFrame(trackedFrame(hand: .right, at: 4.1), at: 4.1)
+
+        let generation = try XCTUnwrap(coordinator.pendingProcessorResetGeneration)
+        XCTAssertTrue(viewState.beginProcessorReset(generation: generation))
+        game.pause(requiresRecalibration: true)
+        XCTAssertTrue(coordinator.acknowledgeProcessorReset(generation))
+        XCTAssertFalse(viewState.beginProcessorReset(generation: generation))
+        XCTAssertFalse(coordinator.acknowledgeProcessorReset(generation))
+
+        for index in 0..<25 {
+            let timestamp = 5 + Double(index) / 60
+            let frame = trackedFrame(hand: .right, at: timestamp)
+            coordinator.receiveJointFrame(frame, at: timestamp)
+            coordinator.updateRequiredJoints(game.requiredJoints)
+            guard let fresh = viewState.consume(frame) else {
+                return XCTFail("Expected unique calibration frame \(index + 1)")
+            }
+            _ = game.process(
+                frame: fresh,
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            )
+            XCTAssertNil(viewState.consume(frame))
+        }
+
+        XCTAssertTrue(game.isCalibrated)
+        XCTAssertEqual(game.requiredJoints, [.wrist])
+        coordinator.updateRequiredJoints(game.requiredJoints)
+        let finalTimestamp = 5 + 24.0 / 60
+        XCTAssertTrue(coordinator.acknowledgeProcessorCalibration(
+            generation: generation,
+            frameTimestamp: finalTimestamp
+        ))
+        XCTAssertTrue(coordinator.confirmRecalibration())
+    }
+
     // Break caught: repeatedly polling an old affected-hand frame can keep a
     // session active forever after ARKit has stopped publishing updates.
     @MainActor

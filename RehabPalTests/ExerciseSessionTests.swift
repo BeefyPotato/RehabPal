@@ -172,6 +172,144 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertEqual(chronology.consume(newer)?.timestamp, 4.1)
     }
 
+    // Break caught: RealityKit render repetitions can process one retained
+    // Balance observation more than once and complete the 25-frame hold early.
+    func testBalanceInputChronologyRejectsDuplicateAndRegressedTimestamps() {
+        var chronology = BalanceInputChronology()
+        let first = calibratedFrame(hand: .right, timestamp: 4)
+        let newer = calibratedFrame(hand: .right, timestamp: 4.1)
+
+        XCTAssertEqual(chronology.consume(first)?.timestamp, 4)
+        XCTAssertNil(chronology.consume(first))
+        XCTAssertNil(chronology.consume(calibratedFrame(hand: .right, timestamp: 3.9)))
+        XCTAssertEqual(chronology.consume(newer)?.timestamp, 4.1)
+    }
+
+    // Break caught: repeatedly observing one reset generation can clear the
+    // neutral and reset the physics ball on every render update.
+    func testBalanceViewTrackingStateBeginsEachResetGenerationExactlyOnce() {
+        var state = BalanceViewTrackingState()
+
+        XCTAssertTrue(state.beginProcessorReset(generation: 7))
+        XCTAssertFalse(state.beginProcessorReset(generation: 7))
+        XCTAssertTrue(state.beginProcessorReset(generation: 8))
+        XCTAssertFalse(state.beginProcessorReset(generation: 8))
+    }
+
+    // Break caught: Demo Mode can replay its initial timestamp and either
+    // calibrate from render cadence or never complete the real 25-frame path.
+    @MainActor
+    func testBalanceDemoCalibrationFramesAreDistinctAndUseTheLiveProcessorPath() throws {
+        let source = SyntheticMovementSource(hand: .right)
+        var trackingState = BalanceViewTrackingState()
+        var session = BalanceSession(prescription: .demo, seed: 4)
+        var timestamps: [TimeInterval] = []
+
+        for index in 1...25 {
+            source.setBalanceCalibrationPose(at: Double(index) / 60)
+            let frame = try XCTUnwrap(trackingState.consume(source.latestJointFrame))
+            timestamps.append(frame.timestamp)
+            _ = session.process(
+                frame: frame,
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            )
+        }
+
+        XCTAssertEqual(Set(timestamps).count, 25)
+        XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(session.requiredJoints, [.wrist])
+    }
+
+    // Break caught: the explicit Demo drop can move only the rendered ball
+    // without submitting a fresh processor frame, leaving progress unchanged.
+    @MainActor
+    func testBalanceDemoDropUsesAFreshFrameToAdvanceTheSessionResultPath() throws {
+        let source = SyntheticMovementSource(hand: .right)
+        var trackingState = BalanceViewTrackingState()
+        var session = BalanceSession(
+            affectedHand: .right,
+            goal: 1,
+            seed: 4,
+            isSimulated: true
+        )
+
+        for index in 1...25 {
+            source.setBalanceCalibrationPose(at: Double(index) / 60)
+            _ = session.process(
+                frame: trackingState.consume(source.latestJointFrame),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            )
+        }
+        var nextTimestamp = 26.0 / 60
+        let event = BalanceFallbackRepAction.process(
+            source: source,
+            nextTimestamp: &nextTimestamp,
+            trackingState: &trackingState,
+            session: &session
+        )
+
+        guard case .scored(completed: 1, goal: 1, _, isComplete: true) = event else {
+            return XCTFail("Expected the Demo drop to score through BalanceSession")
+        }
+        XCTAssertEqual(session.result?.completedDose, 1)
+        XCTAssertEqual(session.result?.trackingNote, "Simulated from explicit Demo Mode physics ball drops")
+    }
+
+    // Break caught: gating the fallback action on Demo provenance leaves a
+    // live authorized test with no way to exercise one processor-backed rep.
+    @MainActor
+    func testBalanceFallbackRepAlsoAdvancesALiveSessionThroughTheProcessor() {
+        let source = SyntheticMovementSource(hand: .right)
+        var trackingState = BalanceViewTrackingState()
+        var session = BalanceSession(
+            affectedHand: .right,
+            goal: 2,
+            seed: 8,
+            isSimulated: false
+        )
+        var nextTimestamp = 1.0 / 60
+        XCTAssertNotNil(trackingState.consume(calibratedFrame(
+            hand: .right,
+            timestamp: 100
+        )))
+
+        let event = BalanceFallbackRepAction.process(
+            source: source,
+            nextTimestamp: &nextTimestamp,
+            trackingState: &trackingState,
+            session: &session
+        )
+
+        guard case .scored(completed: 1, goal: 2, _, isComplete: false) = event else {
+            return XCTFail("Expected one processor-backed live fallback rep")
+        }
+        XCTAssertEqual(session.completedSuccesses, 1)
+        XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(nextTimestamp, 100 + 27.0 / 60, accuracy: 0.000_001)
+    }
+
+    // Break caught: provenance-gating or completion-blind presentation can
+    // hide the assisted control in live sessions or leave it enabled at goal.
+    func testBalanceAssistedControlIsVisibleForAuthorizedLiveAndDemoSessionsAndDisabledAtGoal() {
+        XCTAssertEqual(BalanceFallbackControl.title, "Complete Rep (Assisted)")
+        XCTAssertFalse(BalanceFallbackControl.isVisible(hasAuthorizedSession: false))
+        XCTAssertTrue(BalanceFallbackControl.isVisible(hasAuthorizedSession: true))
+        XCTAssertTrue(BalanceFallbackControl.isEnabled(
+            hasAuthorizedSession: true,
+            isComplete: false
+        ))
+        XCTAssertFalse(BalanceFallbackControl.isEnabled(
+            hasAuthorizedSession: true,
+            isComplete: true
+        ))
+        XCTAssertFalse(BalanceFallbackControl.isEnabled(
+            hasAuthorizedSession: false,
+            isComplete: false
+        ))
+    }
+
     // Break caught: a retained open frame can be replayed across render time
     // until the processor's release dwell completes without another sample.
     func testRepeatedRetainedFrameCannotAdvanceReleaseDwell() throws {

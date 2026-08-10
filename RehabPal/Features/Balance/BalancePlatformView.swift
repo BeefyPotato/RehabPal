@@ -26,6 +26,96 @@ struct BalancePlatformPlacementLatch {
     }
 }
 
+struct BalanceInputChronology: Equatable, Sendable {
+    private var lastTimestamp: TimeInterval?
+
+    mutating func consume(_ frame: HandJointFrame?) -> HandJointFrame? {
+        guard let frame,
+              frame.timestamp.isFinite,
+              lastTimestamp.map({ frame.timestamp > $0 }) ?? true else {
+            return nil
+        }
+        lastTimestamp = frame.timestamp
+        return frame
+    }
+
+    func nextTimestamp(startingAt candidate: TimeInterval) -> TimeInterval {
+        guard let lastTimestamp else { return candidate }
+        return max(candidate, lastTimestamp + 1.0 / 60.0)
+    }
+}
+
+struct BalanceViewTrackingState: Equatable, Sendable {
+    private var chronology = BalanceInputChronology()
+    private(set) var recalibrationGeneration: Int?
+    private var handledResetGeneration: Int?
+
+    mutating func beginProcessorReset(generation: Int) -> Bool {
+        guard handledResetGeneration != generation else { return false }
+        handledResetGeneration = generation
+        recalibrationGeneration = generation
+        return true
+    }
+
+    mutating func consume(_ frame: HandJointFrame?) -> HandJointFrame? {
+        chronology.consume(frame)
+    }
+
+    func nextTimestamp(startingAt candidate: TimeInterval) -> TimeInterval {
+        chronology.nextTimestamp(startingAt: candidate)
+    }
+
+    mutating func finishRecalibration() {
+        recalibrationGeneration = nil
+    }
+}
+
+enum BalanceFallbackRepAction {
+    @MainActor
+    static func process(
+        source: SyntheticMovementSource,
+        nextTimestamp: inout TimeInterval,
+        trackingState: inout BalanceViewTrackingState,
+        session: inout BalanceSession
+    ) -> BalanceEvent {
+        nextTimestamp = trackingState.nextTimestamp(startingAt: nextTimestamp)
+        while !session.isCalibrated {
+            source.setBalanceCalibrationPose(at: nextTimestamp)
+            nextTimestamp += 1.0 / 60.0
+            guard let frame = trackingState.consume(source.latestJointFrame) else {
+                return .paused
+            }
+            _ = session.process(
+                frame: frame,
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            )
+        }
+        source.setBalanceCalibrationPose(at: nextTimestamp)
+        nextTimestamp += 1.0 / 60.0
+        guard let frame = trackingState.consume(source.latestJointFrame) else {
+            return .paused
+        }
+        return session.process(
+            frame: frame,
+            ballPosition: session.currentTarget.position,
+            ballEscaped: false
+        )
+    }
+}
+
+enum BalanceFallbackControl {
+    static let title = "Complete Rep (Assisted)"
+
+    static func isVisible(hasAuthorizedSession: Bool) -> Bool {
+        hasAuthorizedSession
+    }
+
+    static func isEnabled(hasAuthorizedSession: Bool, isComplete: Bool) -> Bool {
+        hasAuthorizedSession && !isComplete
+    }
+}
+
 /// The physical balance game rendered inside the app's one shared mixed space.
 struct BalancePlatformView: View {
     let coordinator: RehabSessionCoordinator
@@ -39,7 +129,9 @@ struct BalancePlatformView: View {
     @State private var subscriptions = BalanceSubscriptionHolder()
     @State private var ballActive = false
     @State private var respawnCountdown: TimeInterval = 0
-    @State private var recalibrationGeneration: Int?
+    @State private var trackingState = BalanceViewTrackingState()
+    @State private var demoSource: SyntheticMovementSource
+    @State private var nextDemoCalibrationTimestamp: TimeInterval = 1.0 / 60.0
     @State private var placementLatch = BalancePlatformPlacementLatch()
 
     private let hudOffset = SIMD3<Float>(0, 0.28, 0.1)
@@ -60,6 +152,7 @@ struct BalancePlatformView: View {
         self.coordinator = coordinator
         self.onProgress = onProgress
         self.onComplete = onComplete
+        _demoSource = State(initialValue: SyntheticMovementSource(hand: request.affectedHand))
         _game = State(initialValue: BalanceSession(
             affectedHand: request.affectedHand,
             goal: request.goal,
@@ -119,16 +212,25 @@ struct BalancePlatformView: View {
                 BalanceHUD(
                     progress: game.progress,
                     isCalibrated: game.isCalibrated,
+                    calibrationProgress: game.calibrationProgress,
+                    calibrationGoal: game.calibrationFrameGoal,
                     pauseReason: coordinator.pauseReason,
                     isDemo: coordinator.isUsingDemoMode,
-                    onDemoDrop: placeDemoBallInHole
+                    showAssistedAction: BalanceFallbackControl.isVisible(
+                        hasAuthorizedSession: hasAuthorizedBalanceSession
+                    ),
+                    assistedActionEnabled: BalanceFallbackControl.isEnabled(
+                        hasAuthorizedSession: hasAuthorizedBalanceSession,
+                        isComplete: game.isComplete
+                    ),
+                    onAssistedRep: completeAssistedRep
                 )
             }
         }
     }
 
     private func gameStep(_ deltaTime: TimeInterval) {
-        coordinator.updateRequiredJoints(WristNeutralCalibration.requiredJoints)
+        coordinator.updateRequiredJoints(game.requiredJoints)
         if processRecalibrationIfNeeded() {
             return
         }
@@ -147,18 +249,22 @@ struct BalancePlatformView: View {
 
         if respawnCountdown > 0 {
             respawnCountdown -= deltaTime
-            applyTrackingTiltWithoutScoring()
+            if let frame = nextTrackingFrame() {
+                applyTrackingTiltWithoutScoring(frame: frame)
+            }
             if respawnCountdown <= 0 {
                 placeHoleAndBall()
             }
             return
         }
 
+        guard let frame = nextTrackingFrame() else { return }
+
         let ballLocal = ball.position(relativeTo: tray)
         let planarPosition = SIMD2<Float>(ballLocal.x, ballLocal.z)
         let escaped = simd_distance(ball.position(relativeTo: nil), trayPosition) > trayRadius * 4
         handle(game.process(
-            frame: coordinator.currentFrame,
+            frame: frame,
             ballPosition: planarPosition,
             ballEscaped: escaped
         ))
@@ -166,20 +272,19 @@ struct BalancePlatformView: View {
 
     private func processRecalibrationIfNeeded() -> Bool {
         if let generation = coordinator.pendingProcessorResetGeneration,
-           recalibrationGeneration != generation {
+           trackingState.beginProcessorReset(generation: generation) {
             game.pause(requiresRecalibration: true)
-            recalibrationGeneration = generation
             placeBallAtStart()
             freezeBall()
             _ = coordinator.acknowledgeProcessorReset(generation)
         }
 
-        guard let generation = recalibrationGeneration else { return false }
+        guard let generation = trackingState.recalibrationGeneration else { return false }
         guard case .trackingLost(requiresRecalibration: true) = coordinator.pauseReason else {
-            recalibrationGeneration = nil
+            trackingState.finishRecalibration()
             return false
         }
-        guard let frame = coordinator.currentFrame else {
+        guard let frame = trackingState.consume(coordinator.currentFrame) else {
             freezeBall()
             return true
         }
@@ -191,6 +296,7 @@ struct BalancePlatformView: View {
         )
         freezeBall()
         if game.isCalibrated {
+            coordinator.updateRequiredJoints(game.requiredJoints)
             _ = coordinator.acknowledgeProcessorCalibration(
                 generation: generation,
                 frameTimestamp: frame.timestamp
@@ -199,12 +305,21 @@ struct BalancePlatformView: View {
         return true
     }
 
-    private func applyTrackingTiltWithoutScoring() {
+    private func applyTrackingTiltWithoutScoring(frame: HandJointFrame) {
         handle(game.process(
-            frame: coordinator.currentFrame,
+            frame: frame,
             ballPosition: BalanceTargetSchedule.ballStart,
             ballEscaped: false
         ), allowScore: false)
+    }
+
+    private func nextTrackingFrame() -> HandJointFrame? {
+        if coordinator.isUsingDemoMode, !game.isCalibrated {
+            demoSource.setBalanceCalibrationPose(at: nextDemoCalibrationTimestamp)
+            nextDemoCalibrationTimestamp += 1.0 / 60.0
+            return trackingState.consume(demoSource.latestJointFrame)
+        }
+        return trackingState.consume(coordinator.currentFrame)
     }
 
     private func handle(_ event: BalanceEvent, allowScore: Bool = true) {
@@ -248,6 +363,10 @@ struct BalancePlatformView: View {
         placementLatch.position ?? BalancePlatformPlacement.position(viewerPosition: nil)
     }
 
+    private var hasAuthorizedBalanceSession: Bool {
+        coordinator.activeRequest?.experience == .exercise(.balance)
+    }
+
     private func placeHoleAndBall() {
         let target = game.currentTarget
         hole.setPosition([target.x, floorThickness / 2 + 0.0015, target.z], relativeTo: tray)
@@ -282,8 +401,8 @@ struct BalancePlatformView: View {
         ball.components.set(body)
     }
 
-    private func placeDemoBallInHole() {
-        guard coordinator.isUsingDemoMode, ballActive, !game.isComplete else { return }
+    private func completeAssistedRep() {
+        guard hasAuthorizedBalanceSession, ballActive, !game.isComplete else { return }
         let target = game.currentTarget
         ball.setPosition([target.x, ballRestY, target.z], relativeTo: tray)
         if var motion = ball.components[PhysicsMotionComponent.self] {
@@ -291,6 +410,13 @@ struct BalancePlatformView: View {
             motion.angularVelocity = .zero
             ball.components.set(motion)
         }
+        let event = BalanceFallbackRepAction.process(
+            source: demoSource,
+            nextTimestamp: &nextDemoCalibrationTimestamp,
+            trackingState: &trackingState,
+            session: &game
+        )
+        handle(event)
     }
 
     private func buildTray() {
@@ -371,9 +497,13 @@ struct BalancePlatformView: View {
 private struct BalanceHUD: View {
     let progress: SessionProgress
     let isCalibrated: Bool
+    let calibrationProgress: Int
+    let calibrationGoal: Int
     let pauseReason: SessionPauseReason?
     let isDemo: Bool
-    let onDemoDrop: () -> Void
+    let showAssistedAction: Bool
+    let assistedActionEnabled: Bool
+    let onAssistedRep: () -> Void
 
     var body: some View {
         VStack(spacing: 8) {
@@ -383,6 +513,8 @@ private struct BalanceHUD: View {
                     .foregroundStyle(.orange)
             } else if !isCalibrated {
                 Label("Hold your prescribed hand level", systemImage: "hand.raised")
+                Text("Hold level: \(calibrationProgress) / \(calibrationGoal)")
+                    .font(.headline.monospacedDigit())
                 Text("Keep all four knuckles straight and level to calibrate")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -394,9 +526,15 @@ private struct BalanceHUD: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if isDemo, progress.completed < progress.goal {
-                Button("Drop ball (Demo Mode)", action: onDemoDrop)
+            if showAssistedAction {
+                Button(BalanceFallbackControl.title, action: onAssistedRep)
                     .buttonStyle(.borderedProminent)
+                    .disabled(!assistedActionEnabled)
+                Text("ASSISTED — NOT TRACKED")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.orange)
+            }
+            if isDemo {
                 Text("SIMULATED")
                     .font(.caption2.bold())
                     .foregroundStyle(.orange)
