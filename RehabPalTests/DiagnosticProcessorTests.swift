@@ -50,6 +50,43 @@ final class DiagnosticProcessorTests: XCTestCase {
         XCTAssertEqual(processor.completedAttempts, 1)
     }
 
+    // Mutation caught: validating only the initial neutral attempts misses
+    // assisted directional targets after the wrist sequence advances.
+    func testAssistedWristAttemptsAdvanceAcrossEveryDirectionalTarget() {
+        var processor = WristDiagnosticProcessor(affectedHand: .right, attemptsPerTarget: 2)
+        _ = processor.process(frame: wristFrame(
+            at: 300,
+            pitchDegrees: 30,
+            rollDegrees: -15,
+            yawDegrees: 55
+        ))
+        var clock: TimeInterval = 0
+
+        for expectedCompleted in 1...10 {
+            XCTAssertTrue(
+                WristDiagnosticAssistedProgressAction.process(
+                    processor: &processor,
+                    nextTimestamp: &clock
+                ),
+                "Assisted attempt failed at sequence position \(expectedCompleted)"
+            )
+            XCTAssertEqual(processor.completedAttempts, expectedCompleted)
+        }
+        XCTAssertTrue(processor.isComplete)
+    }
+
+    // Mutation caught: an assisted skip must be a processor-owned transition,
+    // not a synthetic tracking replay that can be rejected by live calibration.
+    func testDiagnosticProcessorsExposeOneStepAssistedCompletion() {
+        var wrist = WristDiagnosticProcessor(affectedHand: .right, attemptsPerTarget: 2)
+        XCTAssertTrue(wrist.completeAssistedAttempt())
+        XCTAssertEqual(wrist.completedAttempts, 1)
+
+        var finger = FingerROMDiagnosticProcessor(affectedHand: .right, attemptsPerDigit: 2)
+        XCTAssertTrue(finger.completeAssistedAttempt())
+        XCTAssertEqual(finger.completedAttempts, 1)
+    }
+
     // Mutation caught: retaining a partial live ROM baseline causes the
     // deterministic assisted extension/flexion/return sequence to be rejected.
     func testAssistedFingerAttemptDiscardsAnIncompleteLiveAttempt() {
@@ -584,11 +621,13 @@ final class DiagnosticProcessorTests: XCTestCase {
         hand: AffectedHand = .right,
         at timestamp: TimeInterval,
         pitchDegrees: Float = 0,
-        rollDegrees: Float = 0
+        rollDegrees: Float = 0,
+        yawDegrees: Float = 0
     ) -> HandJointFrame {
         let transform = MovementMath.wristTransform(
             pitch: pitchDegrees * degree,
-            roll: rollDegrees * degree
+            roll: rollDegrees * degree,
+            yaw: yawDegrees * degree
         )
         let joints = Dictionary(uniqueKeysWithValues: WristNeutralCalibration.requiredJoints.map {
             ($0, HandJointSample.tracked(transform: transform))

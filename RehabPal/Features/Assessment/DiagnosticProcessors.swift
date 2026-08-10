@@ -230,15 +230,15 @@ struct WristDiagnosticProcessor: Sendable {
         }
     }
 
-    mutating func prepareForAssistedAttempt() {
-        guard !isComplete else { return }
+    @discardableResult
+    mutating func completeAssistedAttempt() -> Bool {
+        guard !isComplete else { return false }
+        let before = completedAttempts
         resetPartialAttempt()
-    }
-
-    func assistedWristTransform(pitch: Float, roll: Float) -> simd_float4x4 {
-        let relative = MovementMath.wristTransform(pitch: pitch, roll: roll)
-        guard let calibration else { return relative }
-        return simd_mul(calibration.wristTransform, relative)
+        holdPrimarySamplesDegrees = [configuration.targetDegrees]
+        holdTargetErrorsDegrees = [0]
+        finishAttempt()
+        return completedAttempts == before + 1
     }
 
     static func controlScore(
@@ -394,60 +394,9 @@ enum WristDiagnosticAssistedProgressAction {
             (processor.latestInputTimestamp ?? nextTimestamp) + 0.01
         )
         let before = processor.completedAttempts
-        processor.prepareForAssistedAttempt()
-        if !processor.isCalibrated {
-            _ = processor.process(frame: frame(processor: processor, target: .center, at: nextTimestamp))
-        }
-        guard let target = processor.currentTarget else { return false }
-        nextTimestamp += 0.1
-        let steps = Int(ceil(processor.configuration.holdSeconds / 0.1))
-        for step in 0...steps {
-            _ = processor.process(frame: frame(
-                processor: processor,
-                target: target,
-                at: nextTimestamp + Double(step) / 10
-            ))
-        }
+        guard processor.completeAssistedAttempt() else { return false }
         nextTimestamp += processor.configuration.holdSeconds + 0.2
-        _ = processor.process(frame: frame(processor: processor, target: .center, at: nextTimestamp))
         return processor.completedAttempts == before + 1
-    }
-
-    private static func frame(
-        processor: WristDiagnosticProcessor,
-        target: WristAssessmentTarget,
-        at timestamp: TimeInterval
-    ) -> HandJointFrame {
-        let radians = processor.configuration.targetDegrees * .pi / 180
-        let pitch: Float
-        let roll: Float
-        switch target {
-        case .center: (pitch, roll) = (0, 0)
-        case .forward: (pitch, roll) = (radians, 0)
-        case .backward: (pitch, roll) = (-radians, 0)
-        case .left: (pitch, roll) = (0, -radians)
-        case .right: (pitch, roll) = (0, radians)
-        }
-        let transform = processor.assistedWristTransform(pitch: pitch, roll: roll)
-        let orderedKnuckles: [HandJoint] = [
-            .indexFingerKnuckle,
-            .middleFingerKnuckle,
-            .ringFingerKnuckle,
-            .littleFingerKnuckle
-        ]
-        var joints: [HandJoint: HandJointSample] = [
-            .wrist: .tracked(transform: transform)
-        ]
-        for (index, joint) in orderedKnuckles.enumerated() {
-            var knuckleTransform = transform
-            knuckleTransform.columns.3 = SIMD4<Float>(Float(index) * 0.02 - 0.03, 0, 0, 1)
-            joints[joint] = .tracked(transform: knuckleTransform)
-        }
-        return .synthetic(
-            hand: processor.affectedHand,
-            timestamp: timestamp,
-            joints: joints
-        )
     }
 }
 
@@ -534,62 +483,15 @@ enum FingerDiagnosticAssistedProgressAction {
         processor: inout FingerROMDiagnosticProcessor,
         nextTimestamp: inout TimeInterval
     ) -> Bool {
-        guard !processor.isComplete, let digit = processor.currentDigit else { return false }
+        guard !processor.isComplete, processor.currentDigit != nil else { return false }
         nextTimestamp = max(
             nextTimestamp,
             (processor.latestInputTimestamp ?? nextTimestamp) + 0.01
         )
         let before = processor.completedAttempts
-        processor.pause()
-        let baselineOpposition: Float? = digit == .thumb ? 0.08 : nil
-        let steps = Int(ceil(processor.configuration.extensionStabilitySeconds / 0.1))
-        for step in 0...steps {
-            _ = processor.process(sample: sample(
-                processor: processor,
-                digit: digit,
-                flexion: .zero,
-                opposition: baselineOpposition,
-                at: nextTimestamp + Double(step) / 10
-            ))
-        }
-        nextTimestamp += processor.configuration.extensionStabilitySeconds + 0.1
-        _ = processor.process(sample: sample(
-            processor: processor,
-            digit: digit,
-            flexion: [processor.configuration.minimumTotalExcursionDegrees + 5, 10, 5],
-            opposition: digit == .thumb
-                ? 0.08 * max(0, 1 - processor.configuration.thumbOppositionReduction - 0.05)
-                : nil,
-            at: nextTimestamp
-        ))
-        nextTimestamp += 0.1
-        _ = processor.process(sample: sample(
-            processor: processor,
-            digit: digit,
-            flexion: .zero,
-            opposition: baselineOpposition,
-            at: nextTimestamp
-        ))
+        guard processor.completeAssistedAttempt() else { return false }
         nextTimestamp += 0.1
         return processor.completedAttempts == before + 1
-    }
-
-    private static func sample(
-        processor: FingerROMDiagnosticProcessor,
-        digit: HandDigit,
-        flexion: SIMD3<Float>,
-        opposition: Float?,
-        at timestamp: TimeInterval
-    ) -> FingerDiagnosticSample {
-        FingerDiagnosticSample(
-            hand: processor.affectedHand,
-            timestamp: timestamp,
-            digit: digit,
-            metrics: FingerROMMetrics(
-                interiorAngles: SIMD3<Float>(repeating: 180) - flexion,
-                oppositionDistance: opposition
-            )
-        )
     }
 }
 
@@ -771,6 +673,17 @@ struct FingerROMDiagnosticProcessor: Sendable {
     mutating func pause() {
         guard !isComplete else { return }
         resetPartialAttempt()
+    }
+
+    @discardableResult
+    mutating func completeAssistedAttempt() -> Bool {
+        guard !isComplete, let digit = currentDigit else { return false }
+        let before = completedAttempts
+        resetPartialAttempt()
+        minimumFlexion = .zero
+        maximumFlexion = [configuration.minimumTotalExcursionDegrees + 5, 10, 5]
+        finishAttempt(for: digit)
+        return completedAttempts == before + 1
     }
 
     private mutating func processValid(_ sample: FingerDiagnosticSample) -> FingerDiagnosticEvent {
