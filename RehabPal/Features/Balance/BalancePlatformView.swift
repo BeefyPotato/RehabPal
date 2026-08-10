@@ -161,8 +161,6 @@ struct BalancePlatformView: View {
     private let wallHeight: Float = 0.025
     private let floorThickness: Float = 0.006
     private let ballRadius: Float = 0.014
-    private let tiltGain: Float = 0.6
-    private let tiltSmoothing: Float = 0.08
 
     init(
         request: RehabSessionRequest,
@@ -381,11 +379,11 @@ struct BalancePlatformView: View {
         }
     }
 
-    private func applyTrayTilt(_ tilt: WristTilt) {
-        let pitch = simd_quatf(angle: tilt.pitch * tiltGain, axis: [1, 0, 0])
-        let roll = simd_quatf(angle: -tilt.roll * tiltGain, axis: [0, 0, 1])
-        let target = pitch * roll
-        let smoothed = simd_slerp(tray.orientation, target, tiltSmoothing)
+    private func applyTrayTilt(_ rotation: BalanceRotation) {
+        let smoothed = BalanceReferenceRotation.smoothed(
+            current: tray.orientation,
+            delta: rotation.quaternion
+        )
         var transform = Transform()
         transform.translation = trayPosition
         transform.rotation = smoothed

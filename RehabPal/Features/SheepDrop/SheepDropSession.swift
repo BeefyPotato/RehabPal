@@ -188,6 +188,7 @@ struct SheepDropSession: Sendable {
     private var releasedAt: TimeInterval?
     private var settledDwellStartedAt: TimeInterval?
     private var successDeadline: TimeInterval?
+    private var isDirectlyGrabbed = false
 
     init(
         affectedHand: AffectedHand,
@@ -240,6 +241,42 @@ struct SheepDropSession: Sendable {
         clearAttemptState()
         phaseBeforePause = nil
         phase = .waitingForHand
+    }
+
+    /// System-targeted drag input, matching the test 9-3 interaction route.
+    /// This deliberately does not inspect or synthesize hand joints.
+    mutating func beginDirectDrag(at position: SIMD3<Float>, timestamp: TimeInterval) -> SheepDropUpdate {
+        guard phase != .complete, position.hasFiniteComponents, timestamp.isFinite else { return waitingUpdate() }
+        lastTimestamp = max(lastTimestamp ?? timestamp, timestamp)
+        pickupDwellStartedAt = nil
+        releaseDwellStartedAt = nil
+        clearCarryState()
+        isDirectlyGrabbed = true
+        phase = .carrying
+        lastSheepPosition = clampedCarryPosition(position)
+        return SheepDropUpdate(event: .pickupBegan, command: .pickup(position: lastSheepPosition))
+    }
+
+    mutating func updateDirectDrag(to position: SIMD3<Float>, timestamp: TimeInterval) -> SheepDropUpdate {
+        guard isDirectlyGrabbed, phase == .carrying, position.hasFiniteComponents else {
+            return SheepDropUpdate(event: .waitingForHand, command: .none)
+        }
+        lastTimestamp = max(lastTimestamp ?? timestamp, timestamp)
+        lastSheepPosition = clampedCarryPosition(position)
+        return SheepDropUpdate(event: .carrying, command: .carry(position: lastSheepPosition))
+    }
+
+    mutating func endDirectDrag(timestamp: TimeInterval) -> SheepDropUpdate {
+        guard isDirectlyGrabbed, phase == .carrying else {
+            return SheepDropUpdate(event: .waitingForHand, command: .none)
+        }
+        isDirectlyGrabbed = false
+        lastTimestamp = max(lastTimestamp ?? timestamp, timestamp)
+        phase = .falling
+        releasedAt = lastTimestamp
+        settledDwellStartedAt = nil
+        clearCarryState()
+        return SheepDropUpdate(event: .released, command: .release)
     }
 
     mutating func process(
@@ -310,6 +347,7 @@ struct SheepDropSession: Sendable {
             return SheepDropUpdate(event: .complete(result), command: .none)
         }
 
+        isDirectlyGrabbed = false
         pickupDwellStartedAt = nil
         releaseDwellStartedAt = nil
         settledDwellStartedAt = nil

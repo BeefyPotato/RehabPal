@@ -714,8 +714,7 @@ final class ExerciseSessionTests: XCTestCase {
         ) else {
             return XCTFail("Expected frame 25 to activate from its captured wrist neutral")
         }
-        XCTAssertEqual(capturedTilt.pitch, 0, accuracy: 0.0001)
-        XCTAssertEqual(capturedTilt.roll, 0, accuracy: 0.0001)
+        XCTAssertEqual(abs(simd_dot(capturedTilt.quaternion.vector, BalanceRotation.identity.quaternion.vector)), 1, accuracy: 0.0001)
         XCTAssertTrue(session.isCalibrated)
         XCTAssertEqual(session.calibrationProgress, 25)
     }
@@ -931,7 +930,7 @@ final class ExerciseSessionTests: XCTestCase {
                     ballPosition: BalanceTargetSchedule.ballStart,
                     ballEscaped: false
                 ),
-                .active(WristTilt(pitch: 0, roll: 0)),
+                .active(BalanceRotation.identity),
                 "Expected active wrist tracking with \(missingKnuckle.rawValue) missing"
             )
         }
@@ -954,7 +953,7 @@ final class ExerciseSessionTests: XCTestCase {
                 ballPosition: BalanceTargetSchedule.ballStart,
                 ballEscaped: false
             ),
-            .active(WristTilt(pitch: 0, roll: 0))
+            .active(BalanceRotation.identity)
         )
         XCTAssertTrue(session.isCalibrated)
         XCTAssertEqual(session.requiredJoints, Set([HandJoint.wrist]))
@@ -991,7 +990,7 @@ final class ExerciseSessionTests: XCTestCase {
             ballPosition: .zero,
             ballEscaped: false
         )
-        XCTAssertEqual(event, .active(WristTilt(pitch: 0, roll: 0)))
+        XCTAssertEqual(event, .active(BalanceRotation.identity))
         XCTAssertTrue(session.isCalibrated)
     }
 
@@ -1003,18 +1002,18 @@ final class ExerciseSessionTests: XCTestCase {
 
         XCTAssertEqual(session.process(frame: nil, ballPosition: session.currentTarget.position, ballEscaped: false), .paused)
         XCTAssertEqual(session.completedSuccesses, 0)
-        XCTAssertEqual(session.process(frame: frame, ballPosition: SIMD2<Float>(0.08, -0.066), ballEscaped: false), .resetBall(WristTilt(pitch: 0, roll: 0)))
+        XCTAssertEqual(session.process(frame: frame, ballPosition: SIMD2<Float>(0.08, -0.066), ballEscaped: false), .resetBall(BalanceRotation.identity))
         XCTAssertEqual(session.completedSuccesses, 0)
         XCTAssertEqual(
             session.process(frame: frame, ballPosition: BalanceTargetSchedule.ballStart, ballEscaped: false),
-            .active(WristTilt(pitch: 0, roll: 0))
+            .active(BalanceRotation.identity)
         )
         XCTAssertEqual(session.completedSuccesses, 0)
 
         let target = session.currentTarget.position
         XCTAssertEqual(
             session.process(frame: frame, ballPosition: target, ballEscaped: false),
-            .scored(completed: 1, goal: 10, tilt: WristTilt(pitch: 0, roll: 0), isComplete: false)
+            .scored(completed: 1, goal: 10, tilt: BalanceRotation.identity, isComplete: false)
         )
         XCTAssertEqual(session.completedSuccesses, 1)
     }
@@ -1027,7 +1026,7 @@ final class ExerciseSessionTests: XCTestCase {
 
         XCTAssertEqual(
             session.process(frame: frame, ballPosition: SIMD2<Float>(1, 1), ballEscaped: true),
-            .resetBall(WristTilt(pitch: 0, roll: 0))
+            .resetBall(BalanceRotation.identity)
         )
         XCTAssertEqual(session.completedSuccesses, 0)
     }
@@ -1061,7 +1060,7 @@ final class ExerciseSessionTests: XCTestCase {
                 ballPosition: BalanceTargetSchedule.ballStart,
                 ballEscaped: false
             ),
-            .resetBall(WristTilt(pitch: 0, roll: 0))
+            .resetBall(BalanceRotation.identity)
         )
         XCTAssertTrue(session.isCalibrated)
     }
@@ -1081,7 +1080,7 @@ final class ExerciseSessionTests: XCTestCase {
             .scored(
                 completed: 1,
                 goal: 10,
-                tilt: WristTilt(pitch: 0, roll: 0),
+                tilt: BalanceRotation.identity,
                 isComplete: false
             )
         )
@@ -1092,7 +1091,7 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertEqual(session.calibrationProgress, 25)
         XCTAssertEqual(session.completedSuccesses, 1)
         XCTAssertEqual(session.process(frame: nil, ballPosition: .zero, ballEscaped: false), .paused)
-        XCTAssertEqual(session.process(frame: frame, ballPosition: .zero, ballEscaped: false), .resetBall(WristTilt(pitch: 0, roll: 0)))
+        XCTAssertEqual(session.process(frame: frame, ballPosition: .zero, ballEscaped: false), .resetBall(BalanceRotation.identity))
         XCTAssertTrue(session.isCalibrated)
         XCTAssertEqual(session.completedSuccesses, 1)
     }
@@ -1111,7 +1110,7 @@ final class ExerciseSessionTests: XCTestCase {
             .scored(
                 completed: 1,
                 goal: 10,
-                tilt: WristTilt(pitch: 0, roll: 0),
+                tilt: BalanceRotation.identity,
                 isComplete: false
             )
         )
@@ -1139,14 +1138,15 @@ final class ExerciseSessionTests: XCTestCase {
                 ballPosition: BalanceTargetSchedule.ballStart,
                 ballEscaped: false
             ),
-            .resetBall(WristTilt(pitch: 0, roll: 0))
+            .resetBall(BalanceRotation.identity)
         )
         XCTAssertTrue(session.isCalibrated)
         XCTAssertEqual(session.completedSuccesses, 1)
     }
 
-    // Break caught: absolute wrist rotation, yaw leakage, or a shared magnitude clamp can create unsafe tray motion.
-    func testBalanceTiltIsNeutralRelativeYawFreeAndIndependentlyClamped() {
+    // Mutation caught: yaw stripping or pitch/roll clamping diverges from the
+    // reference project's full hand-anchor quaternion delta.
+    func testBalanceRotationIsNeutralRelativeAndPreservesFullQuaternion() {
         let neutral = MovementMath.wristTransform(pitch: 0.18, roll: -0.12, yaw: 0.3)
         var session = BalanceSession(prescription: .demo, seed: 15)
         calibrateBalance(&session, wrist: neutral)
@@ -1157,10 +1157,10 @@ final class ExerciseSessionTests: XCTestCase {
             ballPosition: BalanceTargetSchedule.ballStart,
             ballEscaped: false
         ) else {
-            return XCTFail("Expected active yaw-free tilt")
+            return XCTFail("Expected active full rotation")
         }
-        XCTAssertEqual(yawTilt.pitch, 0, accuracy: 0.0001)
-        XCTAssertEqual(yawTilt.roll, 0, accuracy: 0.0001)
+        let expectedYaw = simd_quatf(yawOnly) * simd_quatf(neutral).inverse
+        XCTAssertEqual(abs(simd_dot(yawTilt.quaternion.vector, expectedYaw.vector)), 1, accuracy: 0.0001)
 
         let excessive = MovementMath.wristTransform(pitch: 0.8, roll: -0.7, yaw: 0.4)
         guard case let .active(tilt) = session.process(
@@ -1170,8 +1170,8 @@ final class ExerciseSessionTests: XCTestCase {
         ) else {
             return XCTFail("Expected active calibrated tilt")
         }
-        XCTAssertEqual(tilt.pitch, .pi / 9, accuracy: 0.0001)
-        XCTAssertEqual(tilt.roll, -.pi / 9, accuracy: 0.0001)
+        let expected = simd_quatf(excessive) * simd_quatf(neutral).inverse
+        XCTAssertEqual(abs(simd_dot(tilt.quaternion.vector, expected.vector)), 1, accuracy: 0.0001)
     }
 
     // Break caught: completing the target count with a fixture result loses the measured prescribed/completed dose.

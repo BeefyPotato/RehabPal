@@ -78,7 +78,8 @@ struct SheepDropCoordinateSpace: Sendable {
         return .synthetic(
             hand: frame.hand,
             timestamp: frame.timestamp,
-            joints: localJoints
+            joints: localJoints,
+            anchorTransform: frame.anchorTransform.map { worldToTable * $0 }
         )
     }
 
@@ -231,9 +232,9 @@ struct SheepDropHUDPresentation: Equatable, Sendable {
         case .findingTable:
             instruction = "Finding a table…"
         case .waitingForHand:
-            instruction = "Bring all five fingertips together around the sheep."
+            instruction = "Pinch and drag the sheep."
         case .formingGrasp:
-            instruction = "Hold the five-finger grasp steady."
+            instruction = "Keep dragging the sheep."
         case .carrying:
             instruction = isOverPen
                 ? "Spread your fingers to release."
@@ -243,7 +244,7 @@ struct SheepDropHUDPresentation: Equatable, Sendable {
         case .success, .complete:
             instruction = "Sheep safely in the pen."
         case .resetting:
-            instruction = "Bring all five fingertips together around the sheep."
+            instruction = "Pinch and drag the sheep."
         case .paused:
             instruction = "Tracking paused — hold still."
         }
@@ -284,8 +285,8 @@ private enum SheepDropDemoStage: Equatable {
 }
 
 /// The physical Sheep Drop game rendered in RehabPal's shared mixed space.
-/// Hand input is coordinator-owned; the view never starts ARKit or installs a
-/// system gesture recognizer.
+/// Live manipulation follows test 9-3's system-targeted drag gesture. The
+/// coordinator still owns global wrist presence and the session lifecycle.
 struct SheepDropView: View {
     let coordinator: RehabSessionCoordinator
     let onProgress: (SessionProgress) -> Void
@@ -387,6 +388,12 @@ struct SheepDropView: View {
                 }
             }
         }
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .targetedToAnyEntity()
+                .onChanged(handleDirectDragChanged)
+                .onEnded(handleDirectDragEnded)
+        )
         .onDisappear {
             subscriptions.update = nil
         }
@@ -551,12 +558,13 @@ struct SheepDropView: View {
         body.angularDamping = 1.2
         entity.components.set(body)
         entity.components.set(CollisionComponent(shapes: [shape]))
+        entity.components.set(InputTargetComponent())
         entity.components.set(PhysicsMotionComponent())
         return entity
     }
 
     private func gameStep(deltaTime: TimeInterval) {
-        coordinator.updateRequiredJoints(SheepDropSession.requiredJoints)
+        coordinator.updateRequiredJoints(coordinator.isUsingDemoMode ? SheepDropSession.requiredJoints : [.wrist])
         refreshPlacement()
         if coordinator.isUsingDemoMode {
             demoTimestamp += max(0, deltaTime)
@@ -581,9 +589,15 @@ struct SheepDropView: View {
             return
         }
 
-        let retainedFrame = coordinator.isUsingDemoMode
-            ? demoSource.latestJointFrame
-            : coordinates.penLocalFrame(coordinator.currentFrame)
+        // Live pickup/carry/release is entirely driven by the targeted drag.
+        // Physics settlement continues ticking without hand-joint samples.
+        if !coordinator.isUsingDemoMode,
+           game.phase != .falling,
+           game.phase != .success,
+           game.phase != .resetting {
+            return
+        }
+        let retainedFrame = coordinator.isUsingDemoMode ? demoSource.latestJointFrame : nil
         let frame: HandJointFrame?
         let timestamp: TimeInterval
         if game.phase.requiresFreshHandObservation {
@@ -603,6 +617,33 @@ struct SheepDropView: View {
             observation: observation(in: coordinates),
             at: timestamp
         ), coordinates: coordinates)
+    }
+
+    private func handleDirectDragChanged(_ value: EntityTargetValue<DragGesture.Value>) {
+        guard !coordinator.isUsingDemoMode,
+              value.entity === sheepBody,
+              case let .active(request, _, _) = coordinator.phase,
+              request.experience == .exercise(.sheepDrop),
+              let coordinates = currentCoordinateSpace else { return }
+        let world = value.convert(value.location3D, from: .local, to: .scene)
+        let position = coordinates.penLocalPosition(fromWorld: world)
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        let update = game.phase == .carrying
+            ? game.updateDirectDrag(to: position, timestamp: timestamp)
+            : game.beginDirectDrag(at: position, timestamp: timestamp)
+        handle(update, coordinates: coordinates)
+    }
+
+    private func handleDirectDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {
+        guard !coordinator.isUsingDemoMode,
+              value.entity === sheepBody,
+              case let .active(request, _, _) = coordinator.phase,
+              request.experience == .exercise(.sheepDrop),
+              let coordinates = currentCoordinateSpace else { return }
+        handle(
+            game.endDirectDrag(timestamp: ProcessInfo.processInfo.systemUptime),
+            coordinates: coordinates
+        )
     }
 
     private func refreshPlacement() {

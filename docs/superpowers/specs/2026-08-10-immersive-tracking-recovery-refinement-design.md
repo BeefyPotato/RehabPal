@@ -82,7 +82,13 @@ Match `test 9-3` placement behavior:
 
 This intentionally differs from the earlier full-plane-transform behavior, which could place a large table anchor's center out of reach.
 
-The existing five-fingertip cluster pickup and open-hand release processor remains. Do not replace it with `DragGesture`.
+**Approved user override (2026-08-10):** live Sheep Drop replaces the
+five-fingertip processor with test 9-3's
+`DragGesture(minimumDistance: 0).targetedToAnyEntity()` route. Only the sheep
+interaction root accepts drag input. Gesture changes make it kinematic and
+carry it in pen-local space; gesture end makes it dynamic for the existing
+settle-in-pen scoring. Global affected-wrist presence, Demo assisted progress,
+goals, recovery, and reporting remain RehabPal-owned.
 
 The bundled sheep remains byte-for-byte unchanged. At runtime, orient its wrapper so the source asset's Z-up axis maps to RealityKit Y-up, its legs/contact side face down toward the table, and its head faces toward the pen. Refit the visible model after rotation so its feet align with the collision body's bottom instead of leaving the sheep inverted or offset. The orientation is session-stable and does not follow the viewer.
 

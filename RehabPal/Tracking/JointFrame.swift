@@ -89,11 +89,16 @@ struct HandJointFrame: Sendable {
     let hand: AffectedHand
     let timestamp: TimeInterval
     let joints: [HandJoint: HandJointSample]
+    /// The hand anchor's world transform. This is deliberately distinct from
+    /// the wrist joint transform: ARKit's anchor orientation is the reference
+    /// project's source of palm rotation.
+    let anchorTransform: simd_float4x4?
 
-    init(hand: AffectedHand, timestamp: TimeInterval, joints: [HandJoint: HandJointSample]) {
+    init(hand: AffectedHand, timestamp: TimeInterval, joints: [HandJoint: HandJointSample], anchorTransform: simd_float4x4? = nil) {
         self.hand = hand
         self.timestamp = timestamp
         self.joints = joints
+        self.anchorTransform = anchorTransform ?? joints[.wrist]?.transform
     }
 
     func joint(_ joint: HandJoint) -> HandJointSample? {
@@ -118,9 +123,10 @@ struct HandJointFrame: Sendable {
     static func synthetic(
         hand: AffectedHand,
         timestamp: TimeInterval,
-        joints: [HandJoint: HandJointSample]
+        joints: [HandJoint: HandJointSample],
+        anchorTransform: simd_float4x4? = nil
     ) -> HandJointFrame {
-        HandJointFrame(hand: hand, timestamp: timestamp, joints: joints)
+        HandJointFrame(hand: hand, timestamp: timestamp, joints: joints, anchorTransform: anchorTransform)
     }
 
     init?(anchor: HandAnchor, timestamp: TimeInterval) {
@@ -134,6 +140,7 @@ struct HandJointFrame: Sendable {
             return nil
         }
         self.timestamp = timestamp
+        self.anchorTransform = anchor.originFromAnchorTransform
         self.joints = Dictionary(uniqueKeysWithValues: HandJoint.allCases.map { joint in
             let arKitJoint = skeleton.joint(joint.arKitJointName)
             let sample: HandJointSample
@@ -188,10 +195,9 @@ struct HandJointFrameDemultiplexer: Sendable {
     }
 }
 
-/// Captures the tracked wrist orientation only when the wrist and all four
-/// level knuckles are present, preventing a partial hand from becoming neutral.
+/// Exact calibration gate and anchor-relative rotation used by test8-2.
 struct WristNeutralCalibration: Sendable {
-    static let maximumLevelKnuckleHeightDelta: Float = 0.01
+    static let maximumLevelKnuckleHeightDelta: Float = 0.02
     static let requiredJoints: Set<HandJoint> = [
         .wrist,
         .indexFingerKnuckle,
@@ -200,6 +206,9 @@ struct WristNeutralCalibration: Sendable {
         .littleFingerKnuckle
     ]
 
+    let neutralAnchorOrientation: simd_quatf
+    /// Compatibility datum for wrist diagnostic measurements. Balance never
+    /// consumes this property; its neutral comes from the hand anchor.
     let wristTransform: simd_float4x4
 
     init?(wristTransform: simd_float4x4) {
@@ -209,31 +218,52 @@ struct WristNeutralCalibration: Sendable {
               Self.isFinite(wristTransform.columns.3) else {
             return nil
         }
+        self.neutralAnchorOrientation = simd_quatf(wristTransform)
+        self.wristTransform = wristTransform
+    }
+
+    private init?(anchorTransform: simd_float4x4, wristTransform: simd_float4x4) {
+        guard Self.isFinite(anchorTransform), Self.isFinite(wristTransform) else { return nil }
+        neutralAnchorOrientation = simd_quatf(anchorTransform)
         self.wristTransform = wristTransform
     }
 
     static func capture(from frame: HandJointFrame) -> WristNeutralCalibration? {
         guard frame.confidence(requiring: requiredJoints) == .good,
-              let wristTransform = frame.joint(.wrist)?.transform,
+              let anchorTransform = frame.anchorTransform,
               requiredJoints.allSatisfy({ joint in
                   guard let transform = frame.joint(joint)?.transform else { return false }
                   return isFinite(transform)
               }) else {
             return nil
         }
-        let heights = levelKnuckles.compactMap { frame.joint($0)?.position?.y }
-        guard let minimumHeight = heights.min(), let maximumHeight = heights.max(),
-              maximumHeight - minimumHeight <= maximumLevelKnuckleHeightDelta else {
-            return nil
-        }
-        return WristNeutralCalibration(wristTransform: wristTransform)
+        guard isReferencePose(frame) else { return nil }
+        guard let wristTransform = frame.joint(.wrist)?.transform else { return nil }
+        return WristNeutralCalibration(anchorTransform: anchorTransform, wristTransform: wristTransform)
     }
 
-    func tilt(for wristTransform: simd_float4x4) -> WristTilt {
-        MovementMath.wristTilt(
-            reference: self.wristTransform,
-            current: wristTransform
-        )
+    func relativeRotation(for frame: HandJointFrame) -> simd_quatf? {
+        guard let anchor = frame.anchorTransform else { return nil }
+        return simd_normalize(simd_quatf(anchor) * neutralAnchorOrientation.inverse)
+    }
+
+    static func isReferencePose(_ frame: HandJointFrame) -> Bool {
+        let ordered: [HandJoint] = [.indexFingerKnuckle, .middleFingerKnuckle, .ringFingerKnuckle, .littleFingerKnuckle]
+        let points = ordered.compactMap { frame.joint($0)?.position }
+        guard points.count == 4,
+              points.allSatisfy({ $0.x.isFinite && $0.y.isFinite && $0.z.isFinite }) else { return false }
+        let endpoint = points[3] - points[0]
+        let span = simd_length(endpoint)
+        guard span > 1e-4 else { return false }
+        let axis = endpoint / span
+        guard abs(axis.y) <= 0.25 else { return false }
+        let ys = points.map(\.y)
+        guard (ys.max()! - ys.min()!) <= 0.02 else { return false }
+        func distanceToEndpointLine(_ point: SIMD3<Float>) -> Float {
+            simd_length(simd_cross(point - points[0], axis))
+        }
+        return distanceToEndpointLine(points[1]) <= 0.012 &&
+            distanceToEndpointLine(points[2]) <= 0.012
     }
 
     private static func isFinite(_ vector: SIMD4<Float>) -> Bool {

@@ -32,12 +32,32 @@ struct BalanceTargetSchedule: Equatable, Sendable {
     }
 }
 
+struct BalanceRotation: Equatable, Sendable {
+    let quaternion: simd_quatf
+
+    static let identity = BalanceRotation(quaternion: simd_quatf(angle: 0, axis: [0, 1, 0]))
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        abs(simd_dot(lhs.quaternion.vector, rhs.quaternion.vector)) > 0.999_999
+    }
+}
+
+enum BalanceReferenceRotation {
+    static func target(for delta: simd_quatf) -> simd_quatf {
+        simd_slerp(.init(angle: 0, axis: [0, 1, 0]), delta, 0.6)
+    }
+
+    static func smoothed(current: simd_quatf, delta: simd_quatf) -> simd_quatf {
+        simd_slerp(current, target(for: delta), 0.08)
+    }
+}
+
 enum BalanceEvent: Equatable, Sendable {
     case waitingForCalibration
     case paused
-    case active(WristTilt)
-    case resetBall(WristTilt)
-    case scored(completed: Int, goal: Int, tilt: WristTilt, isComplete: Bool)
+    case active(BalanceRotation)
+    case resetBall(BalanceRotation)
+    case scored(completed: Int, goal: Int, tilt: BalanceRotation, isComplete: Bool)
 }
 
 /// Pure state machine for the calibrated balance game. RealityKit owns the
@@ -144,13 +164,14 @@ struct BalanceSession: Sendable {
             calibration = captured
             calibratedThisFrame = true
         }
-        guard let wrist = frame.joint(.wrist)?.transform,
-              let calibration else {
+        guard frame.joint(.wrist)?.transform != nil,
+              let calibration,
+              let relativeRotation = calibration.relativeRotation(for: frame) else {
             shouldResetOnResume = true
             return .paused
         }
 
-        let tilt = calibration.tilt(for: wrist)
+        let tilt = BalanceRotation(quaternion: relativeRotation)
         if shouldResetOnResume {
             shouldResetOnResume = false
             return .resetBall(tilt)

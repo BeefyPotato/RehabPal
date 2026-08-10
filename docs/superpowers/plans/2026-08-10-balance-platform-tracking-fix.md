@@ -311,6 +311,11 @@ git commit -m "Make hand occlusion recovery phase specific"
 
 ### Task 7: Match Sheep Placement to test 9-3
 
+> Approved user override (2026-08-10): transplant test 9-3's system-targeted
+> drag interaction wholesale for live Sheep pickup/carry/release. The prior
+> five-fingertip live route is superseded; Demo assisted progress may retain
+> synthetic processor frames internally.
+
 **Files:**
 - Modify: `RehabPal/Tracking/TableSurface.swift`
 - Modify: `RehabPal/Features/SheepDrop/SheepDropView.swift`

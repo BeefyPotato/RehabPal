@@ -4,6 +4,38 @@ import simd
 
 @MainActor
 final class SheepDropSessionTests: XCTestCase {
+    // Mutation caught: retaining the five-tip dwell route means a system drag
+    // cannot immediately put the interaction root into kinematic carry.
+    func testDirectDragTransitionsPickupCarryAndReleasePhysicsCommands() {
+        var session = makeSession(goal: 2)
+        let pickup = session.beginDirectDrag(at: sheepPosition, timestamp: 10)
+        XCTAssertEqual(pickup.event, .pickupBegan)
+        XCTAssertEqual(pickup.command, .pickup(position: sheepPosition))
+        XCTAssertEqual(session.phase, .carrying)
+
+        let carriedPosition = SIMD3<Float>(0, 0.2, 0)
+        let carry = session.updateDirectDrag(to: carriedPosition, timestamp: 10.1)
+        XCTAssertEqual(carry.command, .carry(position: carriedPosition))
+        let release = session.endDirectDrag(timestamp: 10.2)
+        XCTAssertEqual(release.event, .released)
+        XCTAssertEqual(release.command, .release)
+        XCTAssertEqual(session.phase, .falling)
+    }
+
+    // Mutation caught: a stray gesture-end or missing hand joints can infer a
+    // release even though the sheep interaction root was never grabbed.
+    func testDirectReleaseRequiresAnAcceptedSheepGrabAndIgnoresJointLoss() {
+        var session = makeSession(goal: 1)
+        XCTAssertEqual(session.endDirectDrag(timestamp: 1).command, .none)
+        _ = session.beginDirectDrag(at: sheepPosition, timestamp: 2)
+        let missing = session.measurementUnavailable(
+            observation: observation(position: sheepPosition)
+        )
+        XCTAssertEqual(missing.event, .carrying)
+        XCTAssertNotEqual(missing.command, .release)
+        XCTAssertEqual(session.completedDrops, 0)
+    }
+
     // Mutation caught: interpreting missing fingertips while carrying as an
     // open hand releases the sheep instead of freezing local measurement.
     func testMeasurementUnavailableFreezesCarryAndClearsReleaseDwell() {

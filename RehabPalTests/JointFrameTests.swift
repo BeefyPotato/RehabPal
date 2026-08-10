@@ -3,6 +3,43 @@ import simd
 @testable import RehabPal
 
 final class JointFrameTests: XCTestCase {
+    // Mutation caught: calibrating from the wrist joint instead of the hand
+    // anchor makes an independently rotating wrist joint steer the tray.
+    func testBalanceCalibrationUsesAnchorOrientationNotWristJointOrientation() throws {
+        let anchor = MovementMath.wristTransform(pitch: 0.2, roll: -0.1, yaw: 0.3)
+        let wrist = MovementMath.wristTransform(pitch: -0.6, roll: 0.5, yaw: -0.4)
+        let frame = referenceCalibrationFrame(timestamp: 1, anchorTransform: anchor, wristTransform: wrist)
+        let calibration = try XCTUnwrap(WristNeutralCalibration.capture(from: frame))
+        let movedAnchor = MovementMath.wristTransform(pitch: 0.45, roll: 0.2, yaw: 0.8)
+        let moved = referenceCalibrationFrame(timestamp: 2, anchorTransform: movedAnchor, wristTransform: wrist)
+
+        let rotation = try XCTUnwrap(calibration.relativeRotation(for: moved))
+        assertQuaternion(rotation, equals: simd_quatf(movedAnchor) * simd_quatf(anchor).inverse)
+    }
+
+    // Mutation caught: a height-only predicate accepts curved knuckles or a
+    // line whose across-hand axis is too steep.
+    func testReferenceCalibrationPredicateUsesExactHorizontalStraightBoundaries() {
+        XCTAssertTrue(WristNeutralCalibration.isReferencePose(referenceCalibrationFrame(timestamp: 1)))
+        XCTAssertFalse(WristNeutralCalibration.isReferencePose(referenceCalibrationFrame(
+            timestamp: 2,
+            middleOffset: [0, 0, 0.0121]
+        )))
+        XCTAssertFalse(WristNeutralCalibration.isReferencePose(referenceCalibrationFrame(
+            timestamp: 3,
+            littlePosition: [0.12, 0.0311, 0]
+        )))
+    }
+
+    // Mutation caught: decomposing to pitch/roll, stripping yaw, or changing
+    // either reference slerp factor produces a different tray quaternion.
+    func testBalanceViewAppliesReferenceFullQuaternionSlerps() {
+        let current = simd_quatf(angle: 0.2, axis: simd_normalize(SIMD3<Float>(1, 1, 0)))
+        let delta = simd_quatf(angle: 0.7, axis: simd_normalize(SIMD3<Float>(1, 2, 3)))
+        let target = simd_slerp(simd_quatf(angle: 0, axis: [0, 1, 0]), delta, 0.6)
+        let expected = simd_slerp(current, target, 0.08)
+        assertQuaternion(BalanceReferenceRotation.smoothed(current: current, delta: delta), equals: expected)
+    }
     // Break caught: exposing ARKit joint names outside the mapper would make frame consumers platform-coupled.
     func testSyntheticFrameUsesAppOwnedJointIdentifiers() {
         let frame = HandJointFrame.synthetic(
@@ -155,28 +192,29 @@ final class JointFrameTests: XCTestCase {
         XCTAssertNil(WristNeutralCalibration.capture(from: frame))
     }
 
-    // Break caught: calculating absolute orientation instead of orientation relative to neutral moves the tray at rest.
-    func testCalibrationMeasuresWristTiltRelativeToNeutral() throws {
+    // Mutation caught: deriving motion from the wrist joint instead of the
+    // retained hand-anchor quaternion loses the reference implementation.
+    func testCalibrationMeasuresFullAnchorRotationRelativeToNeutral() throws {
         let neutral = wristTransform(pitch: 0.2, roll: -0.1, yaw: 0.5)
         let movement = wristTransform(pitch: 0.35, roll: -0.25, yaw: 0.9)
         let calibration = try XCTUnwrap(WristNeutralCalibration(wristTransform: neutral))
-
-        let tilt = calibration.tilt(for: movement)
-
-        XCTAssertEqual(tilt.pitch, 0.149, accuracy: 0.005)
-        XCTAssertEqual(tilt.roll, -0.149, accuracy: 0.005)
+        let frame = HandJointFrame.synthetic(hand: .right, timestamp: 1, joints: [
+            .wrist: .tracked(transform: matrix_identity_float4x4)
+        ], anchorTransform: movement)
+        assertQuaternion(try XCTUnwrap(calibration.relativeRotation(for: frame)), equals: simd_quatf(movement) * simd_quatf(neutral).inverse)
     }
 
-    // Break caught: removing yaw only after calibration lets a world-y rotation steer a hand that was calibrated while tilted.
-    func testCalibrationIgnoresWorldYawAfterNonLevelNeutralPose() throws {
+    // Mutation caught: stripping yaw differs from test8-2's full quaternion.
+    func testCalibrationPreservesWorldYawAfterNonLevelNeutralPose() throws {
         let neutral = wristTransform(pitch: 0.25, roll: -0.2, yaw: 0.4)
         let yawChange = wristTransform(pitch: 0, roll: 0, yaw: 0.6)
         let calibration = try XCTUnwrap(WristNeutralCalibration(wristTransform: neutral))
 
-        let tilt = calibration.tilt(for: yawChange * neutral)
-
-        XCTAssertEqual(tilt.pitch, 0, accuracy: 0.0001)
-        XCTAssertEqual(tilt.roll, 0, accuracy: 0.0001)
+        let movement = yawChange * neutral
+        let frame = HandJointFrame.synthetic(hand: .right, timestamp: 1, joints: [
+            .wrist: .tracked(transform: matrix_identity_float4x4)
+        ], anchorTransform: movement)
+        assertQuaternion(try XCTUnwrap(calibration.relativeRotation(for: frame)), equals: simd_quatf(movement) * simd_quatf(neutral).inverse)
     }
 
     // Break caught: allowing yaw to influence tilt makes a horizontal hand rotation steer the balance tray.
@@ -234,5 +272,39 @@ final class JointFrameTests: XCTestCase {
             SIMD4<Float>(0, 0, 0, 1)
         ))
         return yawRotation * pitchRotation * rollRotation
+    }
+
+    private func referenceCalibrationFrame(
+        timestamp: TimeInterval,
+        anchorTransform: simd_float4x4 = matrix_identity_float4x4,
+        wristTransform: simd_float4x4 = matrix_identity_float4x4,
+        middleOffset: SIMD3<Float> = .zero,
+        littlePosition: SIMD3<Float> = [0.12, 0, 0]
+    ) -> HandJointFrame {
+        func tracked(_ position: SIMD3<Float>) -> HandJointSample {
+            .tracked(transform: simd_float4x4(translation: position))
+        }
+        return .synthetic(
+            hand: .right,
+            timestamp: timestamp,
+            joints: [
+                .wrist: .tracked(transform: wristTransform),
+                .indexFingerKnuckle: tracked([0, 0, 0]),
+                .middleFingerKnuckle: tracked([0.04, 0, 0] + middleOffset),
+                .ringFingerKnuckle: tracked([0.08, 0, 0]),
+                .littleFingerKnuckle: tracked(littlePosition)
+            ],
+            anchorTransform: anchorTransform
+        )
+    }
+
+    private func assertQuaternion(
+        _ actual: simd_quatf,
+        equals expected: simd_quatf,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let dot = abs(simd_dot(actual.vector, expected.vector))
+        XCTAssertEqual(dot, 1, accuracy: 0.0001, file: file, line: line)
     }
 }

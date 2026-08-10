@@ -8,7 +8,7 @@ enum ExerciseIntroductionCopy {
         case .squeeze:
             "Pick up your real stress ball for \(prescription.squeezeRepetitions) close–hold–reopen repetitions. RehabPal observes motion, never grip force."
         case .sheepDrop:
-            "Bring all five fingertips together around each sheep for \(prescription.sheepDropRepetitions) settled sheep placements. RehabPal infers the five-fingertip pose; it does not force-measure your hand."
+            "Pinch the sheep, drag it over the fenced pen, then release it for \(prescription.sheepDropRepetitions) settled placements."
         }
     }
 }
@@ -71,7 +71,7 @@ struct ExerciseDemoView: View {
             } else {
                 Text("Sheep Drop is active in the immersive space.")
                     .font(.title2.weight(.semibold))
-                Text("Bring all five fingertips together around the sheep, carry it over the fenced pen, then spread your fingers to release. RehabPal infers this pose from fingertip positions; it does not force-measure your hand.")
+                Text("Pinch the sheep itself, drag it over the fenced pen, then open your hand to release it.")
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 620)
                 fallbackDisclosure
