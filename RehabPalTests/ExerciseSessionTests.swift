@@ -196,6 +196,23 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertFalse(state.beginProcessorReset(generation: 8))
     }
 
+    // Break caught: frame 26 and later can repeatedly attempt calibration
+    // acknowledgement while the user-confirmation pause is still visible.
+    func testBalanceCalibrationAcknowledgementIsTakenOncePerResetGeneration() {
+        var state = BalanceViewTrackingState()
+
+        XCTAssertTrue(state.beginProcessorReset(generation: 7))
+        XCTAssertTrue(state.takeCalibrationAcknowledgement(generation: 7))
+        XCTAssertFalse(state.takeCalibrationAcknowledgement(generation: 7))
+        XCTAssertFalse(state.takeCalibrationAcknowledgement(generation: 8))
+        XCTAssertFalse(state.beginProcessorReset(generation: 7))
+        XCTAssertFalse(state.takeCalibrationAcknowledgement(generation: 7))
+
+        XCTAssertTrue(state.beginProcessorReset(generation: 8))
+        XCTAssertTrue(state.takeCalibrationAcknowledgement(generation: 8))
+        XCTAssertFalse(state.takeCalibrationAcknowledgement(generation: 8))
+    }
+
     // Break caught: Demo Mode can replay its initial timestamp and either
     // calibrate from render cadence or never complete the real 25-frame path.
     @MainActor
@@ -308,6 +325,60 @@ final class ExerciseSessionTests: XCTestCase {
             hasAuthorizedSession: false,
             isComplete: false
         ))
+    }
+
+    // Break caught: deriving assisted authorization from activeRequest alone
+    // enables synthetic reps during starting, failed, or completed phases.
+    func testBalanceAssistedControlPhaseMatrixAllowsOnlyActiveAndTrackingPausedBalance() {
+        let balance = RehabSessionRequest(experience: .exercise(.balance), prescription: .demo)
+        let squeeze = RehabSessionRequest(experience: .exercise(.squeeze), prescription: .demo)
+        let progress = SessionProgress(completed: 0, goal: balance.goal, partial: 0)
+        let failure = SessionFailure(
+            request: balance,
+            reason: .liveTrackingUnavailable,
+            recoveryActions: [.enterDemoMode, .cancel]
+        )
+        let completed = RehabSessionOutcome(
+            request: balance,
+            progress: SessionProgress(completed: balance.goal, goal: balance.goal, partial: 0),
+            provenance: .live,
+            payload: .gameplay(GameplayResult(
+                exercise: .balance,
+                prescribedDose: balance.goal,
+                completedDose: balance.goal,
+                trackingNote: "Fixture"
+            ))
+        )
+
+        XCTAssertFalse(BalanceFallbackControl.isSessionAuthorized(.idle))
+        XCTAssertFalse(BalanceFallbackControl.isSessionAuthorized(.starting(balance)))
+        XCTAssertTrue(BalanceFallbackControl.isSessionAuthorized(.active(
+            request: balance,
+            progress: progress,
+            provenance: .live
+        )))
+        XCTAssertTrue(BalanceFallbackControl.isSessionAuthorized(.active(
+            request: balance,
+            progress: progress,
+            provenance: .demo
+        )))
+        XCTAssertTrue(BalanceFallbackControl.isSessionAuthorized(.paused(
+            request: balance,
+            progress: progress,
+            reason: .trackingLost(requiresRecalibration: false)
+        )))
+        XCTAssertTrue(BalanceFallbackControl.isSessionAuthorized(.paused(
+            request: balance,
+            progress: progress,
+            reason: .trackingLost(requiresRecalibration: true)
+        )))
+        XCTAssertFalse(BalanceFallbackControl.isSessionAuthorized(.active(
+            request: squeeze,
+            progress: SessionProgress(completed: 0, goal: squeeze.goal, partial: 0),
+            provenance: .live
+        )))
+        XCTAssertFalse(BalanceFallbackControl.isSessionAuthorized(.failed(failure)))
+        XCTAssertFalse(BalanceFallbackControl.isSessionAuthorized(.completed(completed)))
     }
 
     // Break caught: a retained open frame can be replayed across render time

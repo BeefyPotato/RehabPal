@@ -49,11 +49,22 @@ struct BalanceViewTrackingState: Equatable, Sendable {
     private var chronology = BalanceInputChronology()
     private(set) var recalibrationGeneration: Int?
     private var handledResetGeneration: Int?
+    private var acknowledgedCalibrationGeneration: Int?
 
     mutating func beginProcessorReset(generation: Int) -> Bool {
         guard handledResetGeneration != generation else { return false }
         handledResetGeneration = generation
+        acknowledgedCalibrationGeneration = nil
         recalibrationGeneration = generation
+        return true
+    }
+
+    mutating func takeCalibrationAcknowledgement(generation: Int) -> Bool {
+        guard recalibrationGeneration == generation,
+              acknowledgedCalibrationGeneration != generation else {
+            return false
+        }
+        acknowledgedCalibrationGeneration = generation
         return true
     }
 
@@ -113,6 +124,17 @@ enum BalanceFallbackControl {
 
     static func isEnabled(hasAuthorizedSession: Bool, isComplete: Bool) -> Bool {
         hasAuthorizedSession && !isComplete
+    }
+
+    static func isSessionAuthorized(_ phase: RehabSessionPhase) -> Bool {
+        let request: RehabSessionRequest
+        switch phase {
+        case let .active(activeRequest, _, _), let .paused(activeRequest, _, _):
+            request = activeRequest
+        case .idle, .starting, .failed, .completed:
+            return false
+        }
+        return request.experience == .exercise(.balance)
     }
 }
 
@@ -295,7 +317,8 @@ struct BalancePlatformView: View {
             ballEscaped: false
         )
         freezeBall()
-        if game.isCalibrated {
+        if game.isCalibrated,
+           trackingState.takeCalibrationAcknowledgement(generation: generation) {
             coordinator.updateRequiredJoints(game.requiredJoints)
             _ = coordinator.acknowledgeProcessorCalibration(
                 generation: generation,
@@ -364,7 +387,7 @@ struct BalancePlatformView: View {
     }
 
     private var hasAuthorizedBalanceSession: Bool {
-        coordinator.activeRequest?.experience == .exercise(.balance)
+        BalanceFallbackControl.isSessionAuthorized(coordinator.phase)
     }
 
     private func placeHoleAndBall() {

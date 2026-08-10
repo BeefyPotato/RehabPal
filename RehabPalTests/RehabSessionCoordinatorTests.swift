@@ -502,10 +502,34 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(game.requiredJoints, [.wrist])
         coordinator.updateRequiredJoints(game.requiredJoints)
         let finalTimestamp = 5 + 24.0 / 60
-        XCTAssertTrue(coordinator.acknowledgeProcessorCalibration(
-            generation: generation,
-            frameTimestamp: finalTimestamp
-        ))
+        var acknowledgementAttempts = 0
+        if viewState.takeCalibrationAcknowledgement(generation: generation) {
+            acknowledgementAttempts += 1
+            XCTAssertTrue(coordinator.acknowledgeProcessorCalibration(
+                generation: generation,
+                frameTimestamp: finalTimestamp
+            ))
+        }
+
+        let frame26Timestamp = 5 + 25.0 / 60
+        let frame26 = trackedFrame(hand: .right, at: frame26Timestamp)
+        coordinator.receiveJointFrame(frame26, at: frame26Timestamp)
+        if let fresh = viewState.consume(frame26) {
+            _ = game.process(
+                frame: fresh,
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            )
+        }
+        if viewState.takeCalibrationAcknowledgement(generation: generation) {
+            acknowledgementAttempts += 1
+            _ = coordinator.acknowledgeProcessorCalibration(
+                generation: generation,
+                frameTimestamp: frame26Timestamp
+            )
+        }
+
+        XCTAssertEqual(acknowledgementAttempts, 1)
         XCTAssertTrue(coordinator.confirmRecalibration())
     }
 
