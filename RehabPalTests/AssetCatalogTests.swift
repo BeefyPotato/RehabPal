@@ -41,6 +41,11 @@ final class AssetCatalogTests: XCTestCase {
         }
     }
 
+    func testARKitPrivacyDescriptionsAreBundled() {
+        XCTAssertNotNil(Bundle.main.object(forInfoDictionaryKey: "NSHandsTrackingUsageDescription"))
+        XCTAssertNotNil(Bundle.main.object(forInfoDictionaryKey: "NSWorldSensingUsageDescription"))
+    }
+
     func testCC0SheepAssetAndProvenanceAreBundled() throws {
         let sheepURL = try XCTUnwrap(
             Bundle.main.url(forResource: "Sheep", withExtension: "usdz"),
