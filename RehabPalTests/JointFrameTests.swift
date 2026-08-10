@@ -29,6 +29,37 @@ final class JointFrameTests: XCTestCase {
             timestamp: 3,
             littlePosition: [0.12, 0.0311, 0]
         )))
+        XCTAssertTrue(WristNeutralCalibration.isReferencePose(referenceCalibrationFrame(
+            timestamp: 4,
+            middleOffset: [0, 0.006_666_667, 0],
+            ringOffset: [0, 0.013_333_334, 0],
+            littlePosition: [0.12, 0.02, 0]
+        )))
+        XCTAssertFalse(WristNeutralCalibration.isReferencePose(referenceCalibrationFrame(
+            timestamp: 5,
+            middleOffset: [0, 0.006_7, 0],
+            ringOffset: [0, 0.013_4, 0],
+            littlePosition: [0.12, 0.020_1, 0]
+        )))
+    }
+
+    // Mutation caught: removing the reference span guard lets four coincident
+    // knuckles calibrate because their Y spread is zero.
+    func testReferenceCalibrationRejectsZeroSpan() {
+        let sample = HandJointSample.tracked(transform: matrix_identity_float4x4)
+        let frame = HandJointFrame.synthetic(
+            hand: .right,
+            timestamp: 1,
+            joints: [
+                .wrist: sample,
+                .indexFingerKnuckle: sample,
+                .middleFingerKnuckle: sample,
+                .ringFingerKnuckle: sample,
+                .littleFingerKnuckle: sample
+            ],
+            anchorTransform: matrix_identity_float4x4
+        )
+        XCTAssertFalse(WristNeutralCalibration.isReferencePose(frame))
     }
 
     // Mutation caught: decomposing to pitch/roll, stripping yaw, or changing
@@ -279,6 +310,7 @@ final class JointFrameTests: XCTestCase {
         anchorTransform: simd_float4x4 = matrix_identity_float4x4,
         wristTransform: simd_float4x4 = matrix_identity_float4x4,
         middleOffset: SIMD3<Float> = .zero,
+        ringOffset: SIMD3<Float> = .zero,
         littlePosition: SIMD3<Float> = [0.12, 0, 0]
     ) -> HandJointFrame {
         func tracked(_ position: SIMD3<Float>) -> HandJointSample {
@@ -291,7 +323,7 @@ final class JointFrameTests: XCTestCase {
                 .wrist: .tracked(transform: wristTransform),
                 .indexFingerKnuckle: tracked([0, 0, 0]),
                 .middleFingerKnuckle: tracked([0.04, 0, 0] + middleOffset),
-                .ringFingerKnuckle: tracked([0.08, 0, 0]),
+                .ringFingerKnuckle: tracked([0.08, 0, 0] + ringOffset),
                 .littleFingerKnuckle: tracked(littlePosition)
             ],
             anchorTransform: anchorTransform

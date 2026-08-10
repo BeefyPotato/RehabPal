@@ -713,7 +713,7 @@ final class RehabSessionCoordinator {
         case .exercise(.squeeze):
             SqueezeHandMetrics.requiredJoints
         case .exercise(.sheepDrop):
-            SheepDropSession.requiredJoints
+            [.wrist]
         case .handAssessment:
             Set(FingerROMMetrics.requiredJoints(for: .thumb))
         }
@@ -724,10 +724,7 @@ final class RehabSessionCoordinator {
         for request: RehabSessionRequest
     ) -> Bool {
         guard request.experience == .exercise(.sheepDrop) else { return true }
-        guard let pose = FiveFingertipPose(frame: frame, sheepPosition: .zero) else {
-            return false
-        }
-        return pose.clusterRatio >= SheepDropSession.releaseClusterRatio
+        return frame.joint(.wrist)?.isTracked == true && frame.anchorTransform != nil
     }
 
     private func isCurrent(_ token: RehabLiveStartToken) -> Bool {

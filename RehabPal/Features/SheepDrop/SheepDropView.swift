@@ -589,6 +589,10 @@ struct SheepDropView: View {
             return
         }
 
+        if !coordinator.isUsingDemoMode, game.phase == .paused {
+            handle(game.resumeAfterTrackingInterruption(), coordinates: coordinates)
+        }
+
         // Live pickup/carry/release is entirely driven by the targeted drag.
         // Physics settlement continues ticking without hand-joint samples.
         if !coordinator.isUsingDemoMode,
@@ -968,7 +972,7 @@ private struct SheepDropHUD: View {
                     .font(.caption2.bold())
                     .foregroundStyle(.orange)
             }
-            Text("Pickup infers an all-five-fingertip pose; it does not measure grip force.")
+            Text("Use the system pinch to drag the sheep; open your hand to release.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

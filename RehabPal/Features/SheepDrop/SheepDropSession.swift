@@ -189,6 +189,7 @@ struct SheepDropSession: Sendable {
     private var settledDwellStartedAt: TimeInterval?
     private var successDeadline: TimeInterval?
     private var isDirectlyGrabbed = false
+    private var directGrabInterrupted = false
 
     init(
         affectedHand: AffectedHand,
@@ -252,6 +253,7 @@ struct SheepDropSession: Sendable {
         releaseDwellStartedAt = nil
         clearCarryState()
         isDirectlyGrabbed = true
+        directGrabInterrupted = false
         phase = .carrying
         lastSheepPosition = clampedCarryPosition(position)
         return SheepDropUpdate(event: .pickupBegan, command: .pickup(position: lastSheepPosition))
@@ -277,6 +279,24 @@ struct SheepDropSession: Sendable {
         settledDwellStartedAt = nil
         clearCarryState()
         return SheepDropUpdate(event: .released, command: .release)
+    }
+
+    /// Clears a drag that the shared tracking lifecycle interrupted. The
+    /// physical body remains where the pause command froze/reset it, and a
+    /// stale system gesture end cannot infer release or scoring.
+    mutating func resumeAfterTrackingInterruption() -> SheepDropUpdate {
+        guard phase == .paused, directGrabInterrupted else {
+            if phase == .complete, let result {
+                return SheepDropUpdate(event: .complete(result), command: .none)
+            }
+            return SheepDropUpdate(event: .waitingForHand, command: .none)
+        }
+        directGrabInterrupted = false
+        isDirectlyGrabbed = false
+        phaseBeforePause = nil
+        clearAttemptState()
+        phase = .waitingForHand
+        return SheepDropUpdate(event: .waitingForHand, command: .none)
     }
 
     mutating func process(
@@ -347,6 +367,7 @@ struct SheepDropSession: Sendable {
             return SheepDropUpdate(event: .complete(result), command: .none)
         }
 
+        directGrabInterrupted = directGrabInterrupted || isDirectlyGrabbed
         isDirectlyGrabbed = false
         pickupDwellStartedAt = nil
         releaseDwellStartedAt = nil
@@ -685,7 +706,7 @@ struct SheepDropSession: Sendable {
         if isSimulated {
             return "Simulated joint observations from explicit Demo Mode; five-fingertip pose and sheep physics processed identically"
         }
-        return "Measured from affected-hand five-fingertip joint observations and sheep physics"
+        return "Measured from RealityKit targeted system pinch/drag interaction and sheep physics"
     }
 
     private static func hasElapsed(

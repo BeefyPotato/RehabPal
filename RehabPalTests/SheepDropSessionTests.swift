@@ -36,6 +36,28 @@ final class SheepDropSessionTests: XCTestCase {
         XCTAssertEqual(session.completedDrops, 0)
     }
 
+    // Mutation caught: restoring a pre-pause carrying phase leaves the HUD
+    // stuck until a new gesture frame arrives and permits a stale drag end.
+    func testInterruptedDirectGrabResumesWaitingWithoutReleaseOrScore() {
+        for requiresRecalibration in [false, true] {
+            var session = makeSession(goal: 1)
+            _ = session.beginDirectDrag(at: sheepPosition, timestamp: 10)
+            let pause = session.pause(requiresRecalibration: requiresRecalibration)
+            XCTAssertEqual(session.phase, .paused)
+            XCTAssertEqual(pause.command, requiresRecalibration
+                ? .reset(position: session.spawnPosition, linearVelocity: .zero, angularVelocity: .zero)
+                : .freeze(position: sheepPosition))
+
+            let resumed = session.resumeAfterTrackingInterruption()
+            XCTAssertEqual(resumed.event, .waitingForHand)
+            XCTAssertEqual(resumed.command, .none)
+            XCTAssertEqual(session.phase, .waitingForHand)
+            XCTAssertEqual(session.completedDrops, 0)
+            XCTAssertEqual(session.endDirectDrag(timestamp: 11).command, .none)
+            XCTAssertEqual(session.completedDrops, 0)
+        }
+    }
+
     // Mutation caught: interpreting missing fingertips while carrying as an
     // open hand releases the sheep instead of freezing local measurement.
     func testMeasurementUnavailableFreezesCarryAndClearsReleaseDwell() {
@@ -941,7 +963,8 @@ final class SheepDropSessionTests: XCTestCase {
         XCTAssertEqual(result.exercise, .sheepDrop)
         XCTAssertEqual(result.prescribedDose, 5)
         XCTAssertEqual(result.completedDose, 5)
-        XCTAssertTrue(result.trackingNote.contains("five-fingertip joint observations"))
+        XCTAssertFalse(result.trackingNote.localizedCaseInsensitiveContains("five-fingertip"))
+        XCTAssertTrue(result.trackingNote.localizedCaseInsensitiveContains("targeted system pinch/drag"))
     }
 
     // Break caught: reusing the live tracking note for Demo Mode conceals that

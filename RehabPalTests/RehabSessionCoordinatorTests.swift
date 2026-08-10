@@ -138,10 +138,10 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         )
     }
 
-    // Break caught: registering Squeeze's joint set for Sheep Drop rejects a
-    // complete Sheep frame before the view can publish its processor contract.
+    // Mutation caught: retaining the old fingertip contract globally pauses
+    // targeted drag when a non-wrist joint is obscured.
     @MainActor
-    func testSheepDropRegistersItsExactRequiredJointsBeforeFirstPoll() async {
+    func testSheepDropGlobalPresenceRequiresOnlyAffectedWrist() async {
         let coordinator = RehabSessionCoordinator(
             prescription: .demo,
             liveTracking: TestLiveJointSource()
@@ -169,16 +169,14 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             at: 1.1
         )
 
-        XCTAssertEqual(
-            coordinator.pauseReason,
-            .trackingLost(requiresRecalibration: false)
-        )
+        XCTAssertNil(coordinator.pauseReason)
+        XCTAssertEqual(coordinator.currentFrame?.timestamp, 1.1)
     }
 
-    // Break caught: a long-loss reset can be acknowledged with a closed grasp
-    // or a stale/wrong generation, immediately resuming into another pickup.
+    // Mutation caught: retaining five-tip calibration makes long-loss recovery
+    // impossible for the targeted-drag route despite a fresh affected wrist.
     @MainActor
-    func testSheepDropCalibrationRequiresCurrentGenerationAndOpenFiveFingertipFrame() async {
+    func testSheepDropCalibrationAcceptsFreshAffectedWristAfterLongLoss() async {
         let coordinator = RehabSessionCoordinator(
             prescription: .demo,
             liveTracking: TestLiveJointSource()
@@ -193,10 +191,12 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             at: 1
         )
         coordinator.receiveJointFrame(nil, at: 2)
-        coordinator.receiveJointFrame(
-            sheepDropFrame(hand: .right, at: 4.1, pose: .clustered),
-            at: 4.1
-        )
+        let wrist = HandJointSample.tracked(transform: matrix_identity_float4x4)
+        coordinator.receiveJointFrame(.synthetic(
+            hand: .left,
+            timestamp: 4.1,
+            joints: [.wrist: wrist]
+        ), at: 4.1)
 
         let generation = try! XCTUnwrap(coordinator.pendingProcessorResetGeneration)
         XCTAssertFalse(coordinator.acknowledgeProcessorReset(generation + 1))
@@ -208,10 +208,11 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         ))
         XCTAssertFalse(coordinator.canConfirmRecalibration)
 
-        coordinator.receiveJointFrame(
-            sheepDropFrame(hand: .right, at: 4.2, pose: .open),
-            at: 4.2
-        )
+        coordinator.receiveJointFrame(.synthetic(
+            hand: .right,
+            timestamp: 4.2,
+            joints: [.wrist: wrist]
+        ), at: 4.2)
         XCTAssertTrue(coordinator.acknowledgeProcessorCalibration(
             generation: generation,
             frameTimestamp: 4.2
