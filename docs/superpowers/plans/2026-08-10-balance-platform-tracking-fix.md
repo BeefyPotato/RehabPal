@@ -313,10 +313,11 @@ git commit -m "Make hand occlusion recovery phase specific"
 - Modify: `RehabPal/Features/SheepDrop/SheepDropView.swift`
 - Modify: `RehabPalTests/TableSurfaceTests.swift`
 - Modify: `RehabPalTests/ExerciseSessionTests.swift`
+- Modify: `RehabPalTests/AssetCatalogTests.swift`
 
 - [ ] **Step 1: Write failing reference-placement tests**
 
-Feed arbitrary detected plane X/Z and rotation and assert the game transform translation remains X `0`, Z `-0.55`, while Y uses the accepted plane height. Assert fallback `(0, 0.73, -0.55)` and session lock.
+Feed arbitrary detected plane X/Z and rotation and assert the game transform translation remains X `0`, Z `-0.55`, while Y uses the accepted plane height. Assert fallback `(0, 0.73, -0.55)` and session lock. Add an asset-orientation regression that proves the runtime wrapper maps the sheep's source Z-up axis to world Y-up, places its legs/contact side down, and points its head toward the pen without modifying the source USDZ.
 
 - [ ] **Step 2: Verify RED**
 
@@ -324,7 +325,7 @@ Run targeted tests; expected current full plane transform to violate X/Z expecta
 
 - [ ] **Step 3: Implement height-only table placement**
 
-Retain selector stability/height/extent validation, but publish the game placement transform as identity rotation with fixed X/Z and detected/fallback Y. Ignore anchor center and orientation for game placement.
+Retain selector stability/height/extent validation, but publish the game placement transform as identity rotation with fixed X/Z and detected/fallback Y. Ignore anchor center and orientation for game placement. Apply a fixed runtime wrapper rotation before fitting the visible sheep to its collision body; keep the original USDZ unchanged and keep the resulting orientation locked for the session.
 
 - [ ] **Step 4: Verify and commit**
 
@@ -332,7 +333,8 @@ Run TableSurface/Sheep tests and generic app build. Commit:
 
 ```bash
 git add RehabPal/Tracking/TableSurface.swift RehabPal/Features/SheepDrop/SheepDropView.swift \
-  RehabPalTests/TableSurfaceTests.swift RehabPalTests/ExerciseSessionTests.swift
+  RehabPalTests/TableSurfaceTests.swift RehabPalTests/ExerciseSessionTests.swift \
+  RehabPalTests/AssetCatalogTests.swift
 git commit -m "Keep Sheep Drop within reach"
 ```
 

@@ -84,6 +84,8 @@ This intentionally differs from the earlier full-plane-transform behavior, which
 
 The existing five-fingertip cluster pickup and open-hand release processor remains. Do not replace it with `DragGesture`.
 
+The bundled sheep remains byte-for-byte unchanged. At runtime, orient its wrapper so the source asset's Z-up axis maps to RealityKit Y-up, its legs/contact side face down toward the table, and its head faces toward the pen. Refit the visible model after rotation so its feet align with the collision body's bottom instead of leaving the sheep inverted or offset. The orientation is session-stable and does not follow the viewer.
+
 ## Recovery UI
 
 The window-level centered `SessionLifecycleCard` is not shown for immersive tracking loss. Each immersive experience renders a shared compact `ImmersiveRecoveryPanel` above its HUD.
@@ -127,4 +129,4 @@ Tests must prove:
 - Back from each exercise intro returns to routine;
 - Back from recovery closes the immersive session and clears authorization.
 
-Full visionOS test-bundle and app builds are required. Physical Vision Pro acceptance must verify partial occlusion behavior, reachable Sheep placement, non-overlapping recovery UI, and safe Back teardown.
+Full visionOS test-bundle and app builds are required. Physical Vision Pro acceptance must verify partial occlusion behavior, reachable and upright Sheep placement with its head toward the pen, non-overlapping recovery UI, and safe Back teardown.
