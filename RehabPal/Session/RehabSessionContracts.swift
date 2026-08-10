@@ -136,6 +136,21 @@ struct RehabSessionOutcome: Equatable, Sendable {
     let progress: SessionProgress
     let provenance: SessionProvenance
     let payload: SessionOutcomePayload
+    let assistedProgressCount: Int
+
+    init(
+        request: RehabSessionRequest,
+        progress: SessionProgress,
+        provenance: SessionProvenance,
+        payload: SessionOutcomePayload,
+        assistedProgressCount: Int = 0
+    ) {
+        self.request = request
+        self.progress = progress
+        self.provenance = provenance
+        self.payload = payload
+        self.assistedProgressCount = max(0, assistedProgressCount)
+    }
 }
 
 struct ActiveRehabSession: Equatable, Sendable {
@@ -184,4 +199,20 @@ enum RehabSessionPhase: Equatable, Sendable {
     )
     case failed(SessionFailure)
     case completed(RehabSessionOutcome)
+}
+
+enum AssistedProgressControl {
+    static let title = "Complete Current Step (Assisted)"
+
+    static func isAuthorized(
+        _ phase: RehabSessionPhase,
+        for experience: RehabExperience
+    ) -> Bool {
+        switch phase {
+        case let .active(request, progress, _), let .paused(request, progress, _):
+            return request.experience == experience && progress.completed < progress.goal
+        case .idle, .starting, .failed, .completed:
+            return false
+        }
+    }
 }

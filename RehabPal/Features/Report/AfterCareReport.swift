@@ -31,19 +31,27 @@ struct AfterCareReport: Equatable, Sendable {
     let patientReported: PatientReportedSection
     let streak: Int
     let simulatedResultLabels: [String]
+    let assistedResultLabels: [String]
 
     var simulationNote: String? {
         guard !simulatedResultLabels.isEmpty else { return nil }
         return "SIMULATED DEMO RESULTS — \(simulatedResultLabels.joined(separator: ", "))"
     }
 
+    var assistedProgressNote: String? {
+        guard !assistedResultLabels.isEmpty else { return nil }
+        return "ASSISTED PROGRESS — NOT FULLY HAND-TRACKED: \(assistedResultLabels.joined(separator: ", "))"
+    }
+
+    @MainActor
     static func make(
         history: DemoHistory,
         assessment: AssessmentResult,
         gameplay: [GameplayResult],
         symptoms: SymptomResult,
         reviewThreshold: Int,
-        sessionProvenance: [RehabExperience: SessionProvenance]
+        sessionProvenance: [RehabExperience: SessionProvenance],
+        assistedProgressCounts: [RehabExperience: Int]? = nil
     ) -> AfterCareReport {
         let currentWristControl = assessment.availableWristControlScore
         let currentClosureConsistency = assessment.availableClosureConsistencyScore
@@ -92,6 +100,10 @@ struct AfterCareReport: Equatable, Sendable {
             streak: history.currentStreak + 1,
             simulatedResultLabels: resultOrder.compactMap { experience, label in
                 sessionProvenance[experience] == .demo ? label : nil
+            },
+            assistedResultLabels: resultOrder.compactMap { experience, label in
+                guard let count = assistedProgressCounts?[experience], count > 0 else { return nil }
+                return "\(label) (\(count) assisted)"
             }
         )
     }

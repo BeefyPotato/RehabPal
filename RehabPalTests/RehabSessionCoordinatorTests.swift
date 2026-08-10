@@ -557,7 +557,7 @@ final class RehabSessionCoordinatorTests: XCTestCase {
     // Break caught: chirality alone can accept a frame whose joints are too
     // incomplete for the active processor to use safely.
     @MainActor
-    func testRequiredJointConfidenceFailureIsTrackingLoss() async {
+    func testNonWristRequiredJointConfidenceFailureDoesNotCauseGlobalTrackingLoss() async {
         let coordinator = RehabSessionCoordinator(
             prescription: .demo,
             liveTracking: TestLiveJointSource()
@@ -576,8 +576,52 @@ final class RehabSessionCoordinatorTests: XCTestCase {
             at: 1
         )
 
+        XCTAssertNil(coordinator.pauseReason)
+        XCTAssertNotNil(coordinator.currentFrame)
+    }
+
+    // Mutation caught: changing the coordinator presence floor from wrist-only
+    // back to the processor's complete joint set globally pauses this session.
+    @MainActor
+    func testMissingWristStillCausesGlobalTrackingLoss() async {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource()
+        )
+        let request = RehabSessionRequest(
+            experience: .exercise(.squeeze),
+            prescription: .demo
+        )
+        await coordinator.startLiveForTesting(request)
+        var joints = trackedFrame(hand: .right, at: 1).joints
+        joints[.wrist] = .untracked
+
+        coordinator.receiveJointFrame(.synthetic(hand: .right, timestamp: 1, joints: joints), at: 1)
+
         XCTAssertEqual(coordinator.pauseReason, .trackingLost(requiresRecalibration: false))
-        XCTAssertNil(coordinator.currentFrame)
+        coordinator.receiveJointFrame(.synthetic(hand: .right, timestamp: 3.1, joints: joints), at: 3.1)
+        XCTAssertEqual(coordinator.pauseReason, .trackingLost(requiresRecalibration: true))
+    }
+
+    // Mutation caught: registering before a successful processor transition
+    // lets failed assisted actions inflate the clinical provenance count.
+    @MainActor
+    func testAssistedProgressCountRegistersOnlySuccessfulTransitionsAndPersistsInOutcome() async throws {
+        let coordinator = RehabSessionCoordinator(
+            prescription: .demo,
+            liveTracking: TestLiveJointSource()
+        )
+        let request = RehabSessionRequest(experience: .exercise(.squeeze), prescription: .demo)
+        await coordinator.startLiveForTesting(request)
+
+        XCTAssertFalse(coordinator.registerAssistedProgress(from: 0, to: 0))
+        XCTAssertEqual(coordinator.assistedProgressCount, 0)
+        XCTAssertTrue(coordinator.registerAssistedProgress(from: 0, to: 1))
+        XCTAssertEqual(coordinator.assistedProgressCount, 1)
+        coordinator.accept(SessionProgress(completed: request.goal, goal: request.goal, partial: 0))
+        let result = GameplayResult(exercise: .squeeze, prescribedDose: request.goal, completedDose: request.goal, trackingNote: "Measured")
+        let outcome = try XCTUnwrap(coordinator.finish(with: .gameplay(result)))
+        XCTAssertEqual(outcome.assistedProgressCount, 1)
     }
 
     // Break caught: ARKit provider interruption/authorization events can leave

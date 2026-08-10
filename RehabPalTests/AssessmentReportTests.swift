@@ -2,6 +2,22 @@ import XCTest
 @testable import RehabPal
 
 final class AssessmentReportTests: XCTestCase {
+    // Mutation caught: relying only on Demo provenance describes assisted
+    // steps in an otherwise-live session as fully hand tracked.
+    @MainActor
+    func testReportDisclosesAssistedProgressInLiveSession() {
+        let report = AfterCareReport.make(
+            history: .fixture,
+            assessment: .fixture,
+            gameplay: [.fixture(for: .squeeze)],
+            symptoms: .comfortable,
+            reviewThreshold: 6,
+            sessionProvenance: [.exercise(.squeeze): .live],
+            assistedProgressCounts: [.exercise(.squeeze): 2]
+        )
+        XCTAssertEqual(report.assistedResultLabels, ["Squeeze Buddy (2 assisted)"])
+        XCTAssertTrue(report.assistedProgressNote?.contains("NOT FULLY HAND-TRACKED") == true)
+    }
     // Break caught: a screen or processor can silently replace a clinician-set
     // exercise or diagnostic goal with a hard-coded demo value.
     func testEverySessionRequestDerivesItsGoalFromPrescription() {

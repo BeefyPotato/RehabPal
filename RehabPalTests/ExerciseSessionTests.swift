@@ -1369,6 +1369,20 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertEqual(session.completedRepetitions, 1)
     }
 
+    // Mutation caught: treating an incomplete metrics frame as global pause
+    // leaves the inferred face visible or resumes a half-finished close.
+    func testSqueezeMeasurementUnavailableClearsOnlyLocalAttempt() {
+        var session = SqueezeSession(repetitions: 2, closeThreshold: 0.7, reopenThreshold: 0.3, holdSeconds: 0.5)
+        acceptSqueezeBaseline(in: &session, startingAt: 0)
+        _ = session.process(sample: squeezeSample(at: 1.1, closure: 1))
+
+        XCTAssertEqual(session.measurementUnavailable(), .waitingForGrasp)
+        XCTAssertNil(session.facePose)
+        XCTAssertEqual(session.phase, .open)
+        XCTAssertEqual(session.completedRepetitions, 0)
+        XCTAssertTrue(session.isCalibrated)
+    }
+
     // Break caught: synthetic button-driven repetitions can claim to be measured joint-tracking outcomes.
     func testSqueezeDemoCompletionLabelsThePayloadSimulated() throws {
         var session = SqueezeSession(
@@ -1388,6 +1402,18 @@ final class ExerciseSessionTests: XCTestCase {
         let result = try XCTUnwrap(session.result)
         XCTAssertTrue(result.trackingNote.contains("Simulated"))
         XCTAssertFalse(result.trackingNote.contains("Measured"))
+    }
+
+    // Mutation caught: a fallback button that only calibrates on its first
+    // activation does not advance exactly one requested repetition.
+    func testSqueezeAssistedActionAdvancesExactlyOneRepThroughSession() {
+        var session = SqueezeSession(repetitions: 2, closeThreshold: 0.7, reopenThreshold: 0.3, holdSeconds: 0.5)
+        var timestamp: TimeInterval = 10
+        XCTAssertTrue(SqueezeAssistedProgressAction.process(session: &session, nextTimestamp: &timestamp))
+        XCTAssertEqual(session.completedRepetitions, 1)
+        XCTAssertTrue(SqueezeAssistedProgressAction.process(session: &session, nextTimestamp: &timestamp))
+        XCTAssertEqual(session.completedRepetitions, 2)
+        XCTAssertFalse(SqueezeAssistedProgressAction.process(session: &session, nextTimestamp: &timestamp))
     }
 
     private func acceptSqueezeBaseline(in session: inout SqueezeSession, startingAt timestamp: TimeInterval) {

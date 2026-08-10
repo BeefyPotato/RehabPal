@@ -85,10 +85,12 @@ struct WristDiagnosticImmersiveView: View {
                         ),
                         trackingConfidence: Double(processor.trackingConfidence),
                         isPaused: coordinator.pauseReason != nil,
-                        demoActionTitle: processor.isCalibrated
-                            ? "Complete attempt (Demo Mode)"
-                            : "Calibrate neutral (Demo Mode)",
-                        onDemoStep: performDemoStep
+                        assistedActionTitle: "Complete Attempt (Assisted)",
+                        assistedActionEnabled: AssistedProgressControl.isAuthorized(
+                            coordinator.phase,
+                            for: .wristAssessment
+                        ),
+                        onAssistedStep: performAssistedStep
                     )
                 }
             }
@@ -173,27 +175,21 @@ struct WristDiagnosticImmersiveView: View {
         }
     }
 
-    private func performDemoStep() {
-        guard coordinator.isUsingDemoMode, !processor.isComplete else { return }
-        if !processor.isCalibrated {
-            handle(processor.process(frame: demoWristFrame(
-                target: .center,
-                at: demoTimestamp
-            )))
-            return
+    private func performAssistedStep() {
+        guard AssistedProgressControl.isAuthorized(
+            coordinator.phase,
+            for: .wristAssessment
+        ) else { return }
+        let before = processor.completedAttempts
+        guard WristDiagnosticAssistedProgressAction.process(
+            processor: &processor,
+            nextTimestamp: &demoTimestamp
+        ) else { return }
+        _ = coordinator.registerAssistedProgress(from: before, to: processor.completedAttempts)
+        onProgress(processor.progress)
+        if processor.isComplete, let result = processor.result {
+            completionDelivery.attempt { onComplete(result) }
         }
-        guard let target = processor.currentTarget else { return }
-        let holdStartedAt = demoTimestamp + 0.1
-        let holdSteps = Int(ceil(processor.configuration.holdSeconds / 0.1))
-        for step in 0...holdSteps {
-            handle(processor.process(frame: demoWristFrame(
-                target: target,
-                at: holdStartedAt + Double(step) / 10
-            )))
-        }
-        demoTimestamp = holdStartedAt + processor.configuration.holdSeconds
-        demoTimestamp += 0.1
-        handle(processor.process(frame: demoWristFrame(target: .center, at: demoTimestamp)))
     }
 
     private func demoWristFrame(
@@ -289,8 +285,12 @@ struct FingerDiagnosticImmersiveView: View {
                         ),
                         trackingConfidence: processor.trackingConfidence,
                         isPaused: coordinator.pauseReason != nil,
-                        demoActionTitle: "Complete ROM attempt (Demo Mode)",
-                        onDemoStep: performDemoStep
+                        assistedActionTitle: "Complete ROM Attempt (Assisted)",
+                        assistedActionEnabled: AssistedProgressControl.isAuthorized(
+                            coordinator.phase,
+                            for: .handAssessment
+                        ),
+                        onAssistedStep: performAssistedStep
                     )
                 }
             }
@@ -379,41 +379,21 @@ struct FingerDiagnosticImmersiveView: View {
         }
     }
 
-    private func performDemoStep() {
-        guard coordinator.isUsingDemoMode,
-              !processor.isComplete,
-              let digit = processor.currentDigit else {
-            return
+    private func performAssistedStep() {
+        guard AssistedProgressControl.isAuthorized(
+            coordinator.phase,
+            for: .handAssessment
+        ) else { return }
+        let before = processor.completedAttempts
+        guard FingerDiagnosticAssistedProgressAction.process(
+            processor: &processor,
+            nextTimestamp: &demoTimestamp
+        ) else { return }
+        _ = coordinator.registerAssistedProgress(from: before, to: processor.completedAttempts)
+        onProgress(processor.progress)
+        if processor.isComplete, let result = processor.result {
+            completionDelivery.attempt { onComplete(result) }
         }
-        let baselineOpposition: Float? = digit == .thumb ? 0.08 : nil
-        let extensionStartedAt = demoTimestamp
-        let extensionSteps = Int(ceil(processor.configuration.extensionStabilitySeconds / 0.1))
-        for step in 0...extensionSteps {
-            handle(processor.process(sample: demoSample(
-                digit: digit,
-                flexion: .zero,
-                opposition: baselineOpposition,
-                at: extensionStartedAt + Double(step) / 10
-            )))
-        }
-        demoTimestamp = extensionStartedAt + processor.configuration.extensionStabilitySeconds
-        demoTimestamp += 0.1
-        handle(processor.process(sample: demoSample(
-            digit: digit,
-            flexion: [processor.configuration.minimumTotalExcursionDegrees + 5, 10, 5],
-            opposition: digit == .thumb
-                ? 0.08 * max(0, 1 - processor.configuration.thumbOppositionReduction - 0.05)
-                : nil,
-            at: demoTimestamp
-        )))
-        demoTimestamp += 0.1
-        handle(processor.process(sample: demoSample(
-            digit: digit,
-            flexion: .zero,
-            opposition: baselineOpposition,
-            at: demoTimestamp
-        )))
-        demoTimestamp += 0.1
     }
 
     private func demoSample(

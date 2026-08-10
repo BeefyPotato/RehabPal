@@ -286,6 +286,49 @@ enum SqueezeEvent: Equatable, Sendable {
     case complete
 }
 
+enum SqueezeAssistedProgressAction {
+    @discardableResult
+    static func process(
+        session: inout SqueezeSession,
+        nextTimestamp: inout TimeInterval
+    ) -> Bool {
+        guard !session.isComplete else { return false }
+        let before = session.completedRepetitions
+        if !session.isCalibrated {
+            for timestamp in SqueezeDemoSampling.graspTimestamps(startingAt: nextTimestamp) {
+                _ = session.process(sample: sample(session: session, closure: 0, at: timestamp))
+                nextTimestamp = timestamp
+            }
+        }
+        nextTimestamp += 0.1
+        _ = session.process(sample: sample(session: session, closure: 1, at: nextTimestamp))
+        nextTimestamp += 0.8
+        _ = session.process(sample: sample(session: session, closure: 1, at: nextTimestamp))
+        nextTimestamp += 0.1
+        _ = session.process(sample: sample(session: session, closure: 0.5, at: nextTimestamp))
+        nextTimestamp += 0.1
+        _ = session.process(sample: sample(session: session, closure: 0, at: nextTimestamp))
+        return session.completedRepetitions == before + 1
+    }
+
+    private static func sample(
+        session: SqueezeSession,
+        closure: Float,
+        at timestamp: TimeInterval
+    ) -> SqueezeHandSample {
+        SqueezeHandSample(
+            hand: session.affectedHand,
+            timestamp: timestamp,
+            metrics: SqueezeHandMetrics(
+                ballCenter: [0, 1.05, -0.55],
+                radius: 0.04,
+                meanTipToPalmDistance: 0.08 * (1 - closure * 0.5),
+                meanFingerFlexion: 0.3 + (.pi / 2) * closure
+            )
+        )
+    }
+}
+
 struct SqueezeSession: Sendable {
     static let graspStatusLabel = "Grasp pose detected (not object verified)"
 
@@ -359,10 +402,21 @@ struct SqueezeSession: Sendable {
 
     mutating func process(frame: HandJointFrame?) -> SqueezeEvent {
         guard let frame, let sample = SqueezeHandSample(frame: frame) else {
-            pause(requiresRecalibration: false)
-            return .paused
+            return measurementUnavailable()
         }
         return process(sample: sample)
+    }
+
+    /// Clears only processor-local measurement state. The coordinator owns
+    /// prescribed-wrist loss and global pause timing.
+    @discardableResult
+    mutating func measurementUnavailable() -> SqueezeEvent {
+        guard !isComplete else { return .complete }
+        facePose = nil
+        normalizedClosure = 0
+        detector.resetPartial()
+        graspGate.resetCandidate()
+        return .waitingForGrasp
     }
 
     mutating func process(sample: SqueezeHandSample?) -> SqueezeEvent {

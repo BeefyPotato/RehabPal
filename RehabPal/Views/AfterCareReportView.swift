@@ -20,6 +20,9 @@ struct AfterCareReportView: View {
             reviewThreshold: state.prescription.symptomReviewThreshold,
             sessionProvenance: Dictionary(uniqueKeysWithValues: state.sessionOutcomes.map {
                 ($0.key, $0.value.provenance)
+            }),
+            assistedProgressCounts: Dictionary(uniqueKeysWithValues: state.sessionOutcomes.map {
+                ($0.key, $0.value.assistedProgressCount)
             })
         )
     }
@@ -55,6 +58,12 @@ struct AfterCareReportView: View {
                         .font(.headline)
                         .foregroundStyle(.orange)
                         .accessibilityLabel(simulationNote)
+                }
+                if let assistedProgressNote = report.assistedProgressNote {
+                    Label(assistedProgressNote, systemImage: "hand.raised.slash")
+                        .font(.headline)
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel(assistedProgressNote)
                 }
                 Picker("Metric", selection: $metric) {
                     ForEach(Metric.allCases, id: \.self) { Text($0.rawValue).tag($0) }

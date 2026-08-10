@@ -93,7 +93,11 @@ struct SqueezeBuddyView: View {
                     ),
                     pauseReason: coordinator.pauseReason,
                     isDemo: coordinator.isUsingDemoMode,
-                    onDemoStep: performDemoStep
+                    assistedActionEnabled: AssistedProgressControl.isAuthorized(
+                        coordinator.phase,
+                        for: .exercise(.squeeze)
+                    ),
+                    onAssistedStep: performAssistedStep
                 )
             }
         }
@@ -206,24 +210,22 @@ struct SqueezeBuddyView: View {
         mouth.scale = [1 + game.normalizedClosure * 0.45, expression, 1]
     }
 
-    private func performDemoStep() {
-        guard coordinator.isUsingDemoMode, !game.isComplete else { return }
-        if game.facePose == nil {
-            let timestamps = SqueezeDemoSampling.graspTimestamps(startingAt: demoTimestamp)
-            for timestamp in timestamps {
-                handle(game.process(sample: demoSample(closure: 0, at: timestamp)))
-            }
-            demoTimestamp = timestamps.last ?? demoTimestamp
-            return
-        }
-        demoTimestamp += 0.1
-        handle(game.process(sample: demoSample(closure: 1, at: demoTimestamp)))
-        demoTimestamp += 0.8
-        handle(game.process(sample: demoSample(closure: 1, at: demoTimestamp)))
-        demoTimestamp += 0.1
-        handle(game.process(sample: demoSample(closure: 0.5, at: demoTimestamp)))
-        demoTimestamp += 0.1
-        handle(game.process(sample: demoSample(closure: 0, at: demoTimestamp)))
+    private func performAssistedStep() {
+        guard AssistedProgressControl.isAuthorized(
+            coordinator.phase,
+            for: .exercise(.squeeze)
+        ) else { return }
+        let before = game.completedRepetitions
+        guard SqueezeAssistedProgressAction.process(
+            session: &game,
+            nextTimestamp: &demoTimestamp
+        ) else { return }
+        _ = coordinator.registerAssistedProgress(
+            from: before,
+            to: game.completedRepetitions
+        )
+        onProgress(game.progress)
+        if game.isComplete, let result = game.result { onComplete(result) }
     }
 
     private func demoSample(closure: Float, at timestamp: TimeInterval) -> SqueezeHandSample {
@@ -246,7 +248,8 @@ private struct SqueezeHUD: View {
     let presentation: SqueezeHUDPresentation
     let pauseReason: SessionPauseReason?
     let isDemo: Bool
-    let onDemoStep: () -> Void
+    let assistedActionEnabled: Bool
+    let onAssistedStep: () -> Void
 
     var body: some View {
         VStack(spacing: 10) {
@@ -273,9 +276,13 @@ private struct SqueezeHUD: View {
             Text("Vision tracks hand motion; it does not measure grip force.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            if isDemo, progress.completed < progress.goal {
-                Button(presentation.demoActionTitle, action: onDemoStep)
+            if progress.completed < progress.goal {
+                Button("Complete Rep (Assisted)", action: onAssistedStep)
                     .buttonStyle(.borderedProminent)
+                    .disabled(!assistedActionEnabled)
+                Text("ASSISTED — NOT TRACKED")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.orange)
                 Text("SIMULATED")
                     .font(.caption2.bold())
                     .foregroundStyle(.orange)

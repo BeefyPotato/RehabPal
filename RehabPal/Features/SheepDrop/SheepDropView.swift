@@ -354,8 +354,11 @@ struct SheepDropView: View {
                     progress: game.progress,
                     presentation: hudPresentation,
                     loadState: assetLoadState,
-                    demoActionTitle: hudPresentation.demoActionTitle,
-                    onDemoStep: performDemoStep
+                    assistedActionEnabled: AssistedProgressControl.isAuthorized(
+                        coordinator.phase,
+                        for: .exercise(.sheepDrop)
+                    ) && assetLoadState == .ready,
+                    onAssistedStep: performAssistedStep
                 )
             }
         }
@@ -800,6 +803,29 @@ struct SheepDropView: View {
         }
     }
 
+    private func performAssistedStep() {
+        guard AssistedProgressControl.isAuthorized(
+            coordinator.phase,
+            for: .exercise(.sheepDrop)
+        ), assetLoadState == .ready else { return }
+        let before = game.completedDrops
+        guard SheepDropAssistedProgressAction.process(
+            session: &game,
+            nextTimestamp: &demoTimestamp
+        ) else { return }
+        _ = coordinator.registerAssistedProgress(from: before, to: game.completedDrops)
+        onProgress(game.progress)
+        if game.phase == .complete, let result = game.result {
+            onComplete(result)
+        } else {
+            resetSheep(
+                position: SheepDropSceneConfiguration.spawnPosition,
+                linearVelocity: .zero,
+                angularVelocity: .zero
+            )
+        }
+    }
+
     private func processDemoPose(
         _ pose: SyntheticSheepDropPose,
         centeredAt center: SIMD3<Float>,
@@ -831,8 +857,8 @@ private struct SheepDropHUD: View {
     let progress: SessionProgress
     let presentation: SheepDropHUDPresentation
     let loadState: SheepDropAssetLoadState
-    let demoActionTitle: String?
-    let onDemoStep: () -> Void
+    let assistedActionEnabled: Bool
+    let onAssistedStep: () -> Void
 
     var body: some View {
         VStack(spacing: 9) {
@@ -865,9 +891,13 @@ private struct SheepDropHUD: View {
                     .multilineTextAlignment(.center)
             }
 
-            if let demoActionTitle, progress.completed < progress.goal {
-                Button(demoActionTitle, action: onDemoStep)
+            if progress.completed < progress.goal {
+                Button("Complete Sheep Placement (Assisted)", action: onAssistedStep)
                     .buttonStyle(.borderedProminent)
+                    .disabled(!assistedActionEnabled)
+                Text("ASSISTED — NOT TRACKED")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.orange)
             }
             Text("Pickup infers an all-five-fingertip pose; it does not measure grip force.")
                 .font(.caption2)

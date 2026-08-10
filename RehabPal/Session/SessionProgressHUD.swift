@@ -31,8 +31,9 @@ struct DiagnosticHUD: View {
     let presentation: DiagnosticHUDPresentation
     let trackingConfidence: Double
     let isPaused: Bool
-    let demoActionTitle: String
-    let onDemoStep: () -> Void
+    let assistedActionTitle: String
+    let assistedActionEnabled: Bool
+    let onAssistedStep: () -> Void
 
     var body: some View {
         VStack(spacing: 10) {
@@ -51,9 +52,13 @@ struct DiagnosticHUD: View {
             Text("Tracking confidence \(Int((trackingConfidence * 100).rounded()))%")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            if presentation.isDemo && presentation.progress.completed < presentation.progress.goal {
-                Button(demoActionTitle, action: onDemoStep)
+            if presentation.progress.completed < presentation.progress.goal {
+                Button(assistedActionTitle, action: onAssistedStep)
                     .buttonStyle(.borderedProminent)
+                    .disabled(!assistedActionEnabled)
+                Text("ASSISTED — NOT TRACKED")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.orange)
             }
             if let provenanceLabel = presentation.provenanceLabel {
                 Text(provenanceLabel)

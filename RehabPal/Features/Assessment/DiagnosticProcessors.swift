@@ -370,6 +370,58 @@ struct WristDiagnosticProcessor: Sendable {
     }
 }
 
+enum WristDiagnosticAssistedProgressAction {
+    @discardableResult
+    static func process(
+        processor: inout WristDiagnosticProcessor,
+        nextTimestamp: inout TimeInterval
+    ) -> Bool {
+        guard !processor.isComplete else { return false }
+        let before = processor.completedAttempts
+        if !processor.isCalibrated {
+            _ = processor.process(frame: frame(processor: processor, target: .center, at: nextTimestamp))
+        }
+        guard let target = processor.currentTarget else { return false }
+        nextTimestamp += 0.1
+        let steps = Int(ceil(processor.configuration.holdSeconds / 0.1))
+        for step in 0...steps {
+            _ = processor.process(frame: frame(
+                processor: processor,
+                target: target,
+                at: nextTimestamp + Double(step) / 10
+            ))
+        }
+        nextTimestamp += processor.configuration.holdSeconds + 0.2
+        _ = processor.process(frame: frame(processor: processor, target: .center, at: nextTimestamp))
+        return processor.completedAttempts == before + 1
+    }
+
+    private static func frame(
+        processor: WristDiagnosticProcessor,
+        target: WristAssessmentTarget,
+        at timestamp: TimeInterval
+    ) -> HandJointFrame {
+        let radians = processor.configuration.targetDegrees * .pi / 180
+        let pitch: Float
+        let roll: Float
+        switch target {
+        case .center: (pitch, roll) = (0, 0)
+        case .forward: (pitch, roll) = (radians, 0)
+        case .backward: (pitch, roll) = (-radians, 0)
+        case .left: (pitch, roll) = (0, -radians)
+        case .right: (pitch, roll) = (0, radians)
+        }
+        let transform = MovementMath.wristTransform(pitch: pitch, roll: roll)
+        return .synthetic(
+            hand: processor.affectedHand,
+            timestamp: timestamp,
+            joints: Dictionary(uniqueKeysWithValues: WristNeutralCalibration.requiredJoints.map {
+                ($0, HandJointSample.tracked(transform: transform))
+            })
+        )
+    }
+}
+
 struct FingerROMMetrics: Equatable, Sendable {
     let interiorAngles: SIMD3<Float>
     let oppositionDistance: Float?
@@ -444,6 +496,66 @@ struct FingerROMMetrics: Equatable, Sendable {
         _ last: SIMD3<Float>
     ) -> Float {
         MovementMath.angle(between: first - middle, and: last - middle) * 180 / .pi
+    }
+}
+
+enum FingerDiagnosticAssistedProgressAction {
+    @discardableResult
+    static func process(
+        processor: inout FingerROMDiagnosticProcessor,
+        nextTimestamp: inout TimeInterval
+    ) -> Bool {
+        guard !processor.isComplete, let digit = processor.currentDigit else { return false }
+        let before = processor.completedAttempts
+        let baselineOpposition: Float? = digit == .thumb ? 0.08 : nil
+        let steps = Int(ceil(processor.configuration.extensionStabilitySeconds / 0.1))
+        for step in 0...steps {
+            _ = processor.process(sample: sample(
+                processor: processor,
+                digit: digit,
+                flexion: .zero,
+                opposition: baselineOpposition,
+                at: nextTimestamp + Double(step) / 10
+            ))
+        }
+        nextTimestamp += processor.configuration.extensionStabilitySeconds + 0.1
+        _ = processor.process(sample: sample(
+            processor: processor,
+            digit: digit,
+            flexion: [processor.configuration.minimumTotalExcursionDegrees + 5, 10, 5],
+            opposition: digit == .thumb
+                ? 0.08 * max(0, 1 - processor.configuration.thumbOppositionReduction - 0.05)
+                : nil,
+            at: nextTimestamp
+        ))
+        nextTimestamp += 0.1
+        _ = processor.process(sample: sample(
+            processor: processor,
+            digit: digit,
+            flexion: .zero,
+            opposition: baselineOpposition,
+            at: nextTimestamp
+        ))
+        nextTimestamp += 0.1
+        return processor.completedAttempts == before + 1
+    }
+
+    private static func sample(
+        processor: FingerROMDiagnosticProcessor,
+        digit: HandDigit,
+        flexion: SIMD3<Float>,
+        opposition: Float?,
+        at timestamp: TimeInterval
+    ) -> FingerDiagnosticSample {
+        FingerDiagnosticSample(
+            hand: processor.affectedHand,
+            timestamp: timestamp,
+            digit: digit,
+            metrics: FingerROMMetrics(
+                interiorAngles: SIMD3<Float>(repeating: 180) - flexion,
+                oppositionDistance: opposition
+            )
+        )
     }
 }
 

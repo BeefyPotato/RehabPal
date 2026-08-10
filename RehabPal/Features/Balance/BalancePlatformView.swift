@@ -426,6 +426,7 @@ struct BalancePlatformView: View {
 
     private func completeAssistedRep() {
         guard hasAuthorizedBalanceSession, ballActive, !game.isComplete else { return }
+        let previousCompleted = game.progress.completed
         let target = game.currentTarget
         ball.setPosition([target.x, ballRestY, target.z], relativeTo: tray)
         if var motion = ball.components[PhysicsMotionComponent.self] {
@@ -438,6 +439,10 @@ struct BalancePlatformView: View {
             nextTimestamp: &nextDemoCalibrationTimestamp,
             trackingState: &trackingState,
             session: &game
+        )
+        _ = coordinator.registerAssistedProgress(
+            from: previousCompleted,
+            to: game.progress.completed
         )
         handle(event)
     }

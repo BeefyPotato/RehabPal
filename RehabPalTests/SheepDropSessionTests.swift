@@ -4,6 +4,31 @@ import simd
 
 @MainActor
 final class SheepDropSessionTests: XCTestCase {
+    // Mutation caught: interpreting missing fingertips while carrying as an
+    // open hand releases the sheep instead of freezing local measurement.
+    func testMeasurementUnavailableFreezesCarryAndClearsReleaseDwell() {
+        var session = makeSession(goal: 1)
+        let sheep = observation(position: [0, 0.73, -0.55], resting: true)
+        _ = session.process(frame: handFrame(timestamp: 0, tips: clusteredTips), observation: sheep, at: 0)
+        _ = session.process(frame: handFrame(timestamp: 0.3, tips: clusteredTips), observation: sheep, at: 0.3)
+        let update = session.measurementUnavailable(observation: sheep)
+        XCTAssertEqual(update.event, .carrying)
+        XCTAssertEqual(update.command, .freeze(position: sheep.position))
+        XCTAssertEqual(session.phase, .carrying)
+        XCTAssertEqual(session.completedDrops, 0)
+    }
+
+    // Mutation caught: an assisted Sheep action that only advances the view's
+    // demo stage requires multiple presses instead of one completed placement.
+    func testAssistedActionAdvancesExactlyOneDropThroughSession() {
+        var session = makeSession(goal: 2, isSimulated: true)
+        var timestamp: TimeInterval = 2
+        XCTAssertTrue(SheepDropAssistedProgressAction.process(session: &session, nextTimestamp: &timestamp))
+        XCTAssertEqual(session.completedDrops, 1)
+        XCTAssertTrue(SheepDropAssistedProgressAction.process(session: &session, nextTimestamp: &timestamp))
+        XCTAssertEqual(session.completedDrops, 2)
+        XCTAssertFalse(SheepDropAssistedProgressAction.process(session: &session, nextTimestamp: &timestamp))
+    }
     private let sheepPosition = SIMD3<Float>(0.10, 0.08, -0.05)
 
     // Break caught: extracting fewer than five fingertip positions, or using an

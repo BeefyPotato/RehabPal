@@ -53,6 +53,87 @@ struct SheepDropUpdate: Equatable, Sendable {
     let command: SheepDropCommand
 }
 
+enum SheepDropAssistedProgressAction {
+    @discardableResult
+    static func process(
+        session: inout SheepDropSession,
+        nextTimestamp: inout TimeInterval
+    ) -> Bool {
+        guard session.phase != .complete else { return false }
+        let before = session.completedDrops
+        let spawn = SheepDropObservation(
+            position: session.spawnPosition,
+            velocity: .zero,
+            isRestingOnSpawnSurface: true,
+            isOutsideSafeVolume: false
+        )
+        var base = nextTimestamp
+        if session.phase == .resetting {
+            _ = session.process(frame: nil, observation: spawn, at: base)
+            base += 0.01
+        }
+        _ = session.process(
+            frame: frame(hand: session.affectedHand, timestamp: base, center: session.spawnPosition, open: false),
+            observation: spawn,
+            at: base
+        )
+        _ = session.process(
+            frame: frame(hand: session.affectedHand, timestamp: base + 0.25, center: session.spawnPosition, open: false),
+            observation: spawn,
+            at: base + 0.25
+        )
+        let overPen = SIMD3<Float>(0, 0.22, 0)
+        let carried = SheepDropObservation(position: overPen, velocity: .zero, isRestingOnSpawnSurface: false, isOutsideSafeVolume: false)
+        _ = session.process(
+            frame: frame(hand: session.affectedHand, timestamp: base + 0.35, center: overPen, open: false),
+            observation: carried,
+            at: base + 0.35
+        )
+        _ = session.process(
+            frame: frame(hand: session.affectedHand, timestamp: base + 0.40, center: overPen, open: true),
+            observation: carried,
+            at: base + 0.40
+        )
+        _ = session.process(
+            frame: frame(hand: session.affectedHand, timestamp: base + 0.55, center: overPen, open: true),
+            observation: carried,
+            at: base + 0.55
+        )
+        let settled = SheepDropObservation(position: [0, 0.03, 0], velocity: .zero, isRestingOnSpawnSurface: false, isOutsideSafeVolume: false)
+        _ = session.process(frame: nil, observation: settled, at: base + 0.60)
+        _ = session.process(frame: nil, observation: settled, at: base + 0.85)
+        _ = session.process(frame: nil, observation: settled, at: base + 1.65)
+        nextTimestamp = base + 1.75
+        return session.completedDrops == before + 1
+    }
+
+    private static func frame(
+        hand: AffectedHand,
+        timestamp: TimeInterval,
+        center: SIMD3<Float>,
+        open: Bool
+    ) -> HandJointFrame {
+        func tracked(_ position: SIMD3<Float>) -> HandJointSample {
+            .tracked(transform: simd_float4x4(translation: position))
+        }
+        let offsets: [Float] = open
+            ? [-0.05, -0.025, 0, 0.025, 0.05]
+            : [-0.01, -0.005, 0, 0.005, 0.01]
+        let tips: [HandJoint] = [.thumbTip, .indexFingerTip, .middleFingerTip, .ringFingerTip, .littleFingerTip]
+        var joints: [HandJoint: HandJointSample] = [
+            .wrist: tracked(center + [0, -0.08, 0]),
+            .indexFingerKnuckle: tracked(center + [0.08, -0.08, 0]),
+            .middleFingerKnuckle: tracked(center + [0, 0, 0]),
+            .ringFingerKnuckle: tracked(center + [-0.08, -0.08, 0]),
+            .littleFingerKnuckle: tracked(center + [0, -0.16, 0])
+        ]
+        for (tip, offset) in zip(tips, offsets) {
+            joints[tip] = tracked(center + [offset, 0, 0])
+        }
+        return .synthetic(hand: hand, timestamp: timestamp, joints: joints)
+    }
+}
+
 struct SheepDropSession: Sendable {
     static let pickupDwellDuration: TimeInterval = 0.25
     static let releaseDwellDuration: TimeInterval = 0.15
@@ -245,6 +326,29 @@ struct SheepDropSession: Sendable {
         )
     }
 
+    /// Freezes an incomplete local hand measurement without entering the
+    /// shared tracking-loss lifecycle or inferring an open-hand release.
+    mutating func measurementUnavailable(
+        observation: SheepDropObservation
+    ) -> SheepDropUpdate {
+        pickupDwellStartedAt = nil
+        releaseDwellStartedAt = nil
+        guard phase != .complete else {
+            return result.map { SheepDropUpdate(event: .complete($0), command: .none) }
+                ?? waitingUpdate()
+        }
+        if phase == .carrying {
+            if observation.position.hasFiniteComponents {
+                lastSheepPosition = observation.position
+            }
+            return SheepDropUpdate(
+                event: .carrying,
+                command: .freeze(position: lastSheepPosition)
+            )
+        }
+        return waitingUpdate()
+    }
+
     private mutating func processPickupCandidate(
         frame: HandJointFrame?,
         observation: SheepDropObservation,
@@ -298,7 +402,7 @@ struct SheepDropSession: Sendable {
                 frame: frame,
                 sheepPosition: observation.position
               ) else {
-            return pause(requiresRecalibration: false)
+            return measurementUnavailable(observation: observation)
         }
 
         if pose.clusterRatio >= Self.releaseClusterRatio {

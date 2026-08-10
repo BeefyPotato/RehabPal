@@ -4,6 +4,19 @@ import simd
 
 @MainActor
 final class DiagnosticProcessorTests: XCTestCase {
+    // Mutation caught: directly incrementing diagnostic presentation state
+    // would not create the processor's bounded attempt/result data.
+    func testAssistedDiagnosticActionsAdvanceExactlyOneProcessorMeasurement() {
+        var wrist = WristDiagnosticProcessor(affectedHand: .right, attemptsPerTarget: 2)
+        var wristTimestamp: TimeInterval = 0
+        XCTAssertTrue(WristDiagnosticAssistedProgressAction.process(processor: &wrist, nextTimestamp: &wristTimestamp))
+        XCTAssertEqual(wrist.completedAttempts, 1)
+
+        var finger = FingerROMDiagnosticProcessor(affectedHand: .right, attemptsPerDigit: 2)
+        var fingerTimestamp: TimeInterval = 0
+        XCTAssertTrue(FingerDiagnosticAssistedProgressAction.process(processor: &finger, nextTimestamp: &fingerTimestamp))
+        XCTAssertEqual(finger.completedAttempts, 1)
+    }
     private let degree = Float.pi / 180
 
     // Break caught: a diagnostic could calibrate from the non-prescribed hand or skip the standardized target order.

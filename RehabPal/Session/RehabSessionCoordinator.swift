@@ -29,6 +29,7 @@ final class RehabSessionCoordinator {
     private var requiredJoints: Set<HandJoint> = []
     private var latestFrameReceivedAt: TimeInterval?
     private var providerInterruptionAt: TimeInterval?
+    private var lastAssistedRegisteredCompletion: Int?
 
     private var startupGeneration = 0
     private var preparedLiveStart: RehabLiveStartToken?
@@ -41,6 +42,7 @@ final class RehabSessionCoordinator {
     private(set) var monitoringGeneration = 0
     private(set) var phaseRevision = 0
     private(set) var pendingProcessorResetGeneration: Int?
+    private(set) var assistedProgressCount = 0
 
     init(
         prescription: Prescription,
@@ -334,8 +336,25 @@ final class RehabSessionCoordinator {
     }
 
     func accept(_ newProgress: SessionProgress) {
-        guard case let .active(request, currentProgress, provenance) = phase,
-              newProgress.goal == request.goal,
+        let request: RehabSessionRequest
+        let currentProgress: SessionProgress
+        let provenance: SessionProvenance
+        let pausedReason: SessionPauseReason?
+        switch phase {
+        case let .active(activeRequest, progress, activeProvenance):
+            request = activeRequest
+            currentProgress = progress
+            provenance = activeProvenance
+            pausedReason = nil
+        case let .paused(activeRequest, progress, reason):
+            request = activeRequest
+            currentProgress = progress
+            provenance = .live
+            pausedReason = reason
+        case .idle, .starting, .failed, .completed:
+            return
+        }
+        guard newProgress.goal == request.goal,
               newProgress.completed >= currentProgress.completed,
               newProgress.completed <= request.goal,
               newProgress.partial.isFinite,
@@ -343,11 +362,49 @@ final class RehabSessionCoordinator {
               newProgress != currentProgress else {
             return
         }
+        if let pausedReason {
+            guard lastAssistedRegisteredCompletion == newProgress.completed,
+                  newProgress.completed == currentProgress.completed + 1 else {
+                return
+            }
+            setPhase(.paused(
+                request: request,
+                progress: newProgress,
+                reason: pausedReason
+            ))
+            return
+        }
         setPhase(.active(
             request: request,
             progress: newProgress,
             provenance: provenance
         ))
+    }
+
+    /// Registers provenance only after a processor/session reports one exact
+    /// completed-unit transition. Presentation code must not call this for a
+    /// no-op, multi-unit jump, or after the prescribed goal is complete.
+    @discardableResult
+    func registerAssistedProgress(from previousCompleted: Int, to newCompleted: Int) -> Bool {
+        let request: RehabSessionRequest
+        let currentProgress: SessionProgress
+        switch phase {
+        case let .active(activeRequest, progress, _), let .paused(activeRequest, progress, _):
+            request = activeRequest
+            currentProgress = progress
+        case .idle, .starting, .failed, .completed:
+            return false
+        }
+        guard previousCompleted >= 0,
+              currentProgress.completed == previousCompleted,
+              newCompleted == previousCompleted + 1,
+              newCompleted <= request.goal,
+              lastAssistedRegisteredCompletion.map({ newCompleted > $0 }) ?? true else {
+            return false
+        }
+        assistedProgressCount += 1
+        lastAssistedRegisteredCompletion = newCompleted
+        return true
     }
 
     func updateRequiredJoints(_ joints: Set<HandJoint>) {
@@ -487,11 +544,12 @@ final class RehabSessionCoordinator {
             request: request,
             progress: progress,
             provenance: provenance,
-            payload: payload
+            payload: payload,
+            assistedProgressCount: assistedProgressCount
         )
         invalidateStartup()
         cleanUpTracking()
-        resetPublishedTrackingState()
+        resetPublishedTrackingState(resetAssistedProgress: false)
         setPhase(.completed(outcome))
         return outcome
     }
@@ -615,7 +673,7 @@ final class RehabSessionCoordinator {
               frame.isForAffectedHand(request.affectedHand),
               timestamp - frame.timestamp <= maximumFrameAge,
               providerInterruptionAt.map({ frame.timestamp > $0 }) ?? true,
-              frame.confidence(requiring: requiredJoints) == .good else {
+              frame.confidence(requiring: [.wrist]) == .good else {
             return false
         }
         return true
@@ -666,7 +724,7 @@ final class RehabSessionCoordinator {
         preparedLiveStart = nil
     }
 
-    private func resetPublishedTrackingState() {
+    private func resetPublishedTrackingState(resetAssistedProgress: Bool = true) {
         latestAcceptedJointFrame = nil
         latestFrameReceivedAt = nil
         pendingDiagnosticObservations.removeAll(keepingCapacity: true)
@@ -677,6 +735,10 @@ final class RehabSessionCoordinator {
         calibratedProcessorGeneration = nil
         requiredJoints.removeAll(keepingCapacity: true)
         demoTracking = nil
+        if resetAssistedProgress {
+            assistedProgressCount = 0
+            lastAssistedRegisteredCompletion = nil
+        }
     }
 
     private func cleanUpTracking() {
