@@ -1,52 +1,1288 @@
 import XCTest
+import simd
 @testable import RehabPal
 
+@MainActor
 final class ExerciseSessionTests: XCTestCase {
-    @MainActor func testMovingHoleScheduleHasEightSafeTargetsAcrossAllQuadrants() {
-        let schedule = BalanceTargetSchedule(seed: 42)
-        XCTAssertEqual(schedule.targets.count, 8)
-        for quadrant in BalanceQuadrant.allCases {
-            XCTAssertEqual(schedule.targets.filter { $0.quadrant == quadrant }.count, 2)
+    // Mutation caught: smoothing only on a new processor frame leaves the tray
+    // and physics ball waiting at the coordinator's 50 ms polling cadence.
+    func testBalanceRenderCadenceContinuesTowardRetainedTargetEveryTick() {
+        var state = BalanceRenderRotationState()
+        let delta = simd_quatf(angle: 0.7, axis: simd_normalize(SIMD3<Float>(1, 2, 3)))
+        state.retain(BalanceRotation(quaternion: delta))
+        let first = state.nextOrientation(from: BalanceRotation.identity.quaternion)!
+        let second = state.nextOrientation(from: first)!
+        XCTAssertGreaterThan(abs(first.angle), 0)
+        XCTAssertGreaterThan(abs(second.angle), abs(first.angle))
+    }
+
+    // Mutation caught: keeping the first delta after a newer anchor arrives
+    // makes render smoothing chase stale hand orientation.
+    func testBalanceRenderCadenceReplacesRetainedTargetWithoutProcessingDuplicates() {
+        var state = BalanceRenderRotationState()
+        let first = simd_quatf(angle: 0.5, axis: [1, 0, 0])
+        let replacement = simd_quatf(angle: 0.4, axis: [0, 0, 1])
+        state.retain(BalanceRotation(quaternion: first))
+        state.retain(BalanceRotation(quaternion: replacement))
+        let actual = state.nextOrientation(from: BalanceRotation.identity.quaternion)!
+        let expected = BalanceReferenceRotation.smoothed(
+            current: BalanceRotation.identity.quaternion,
+            delta: replacement
+        )
+        XCTAssertEqual(abs(simd_dot(actual.vector, expected.vector)), 1, accuracy: 0.0001)
+    }
+
+    // Mutation caught: retaining the pre-loss delta lets the tray continue to
+    // move during a brief pause or immediately after long-loss confirmation.
+    func testBalanceRenderCadenceClearRequiresFreshPostRecoveryDelta() {
+        var state = BalanceRenderRotationState()
+        let stale = BalanceRotation(quaternion: simd_quatf(angle: 0.6, axis: [1, 0, 0]))
+        state.retain(stale)
+        XCTAssertNotNil(state.nextOrientation(from: BalanceRotation.identity.quaternion))
+
+        state.clear()
+        XCTAssertNil(state.nextOrientation(from: BalanceRotation.identity.quaternion))
+        XCTAssertNil(state.latestDelta)
+
+        let fresh = BalanceRotation(quaternion: simd_quatf(angle: 0.4, axis: [0, 0, 1]))
+        state.retain(fresh)
+        let resumed = state.nextOrientation(from: BalanceRotation.identity.quaternion)
+        XCTAssertNotNil(resumed)
+        let expected = BalanceReferenceRotation.smoothed(
+            current: BalanceRotation.identity.quaternion,
+            delta: fresh.quaternion
+        )
+        XCTAssertEqual(abs(simd_dot(resumed!.vector, expected.vector)), 1, accuracy: 0.0001)
+    }
+
+    func testBalanceRenderPollingIsLiveBalanceSpecificForActiveAndPaused() {
+        let request = RehabSessionRequest(experience: .exercise(.balance), prescription: .demo)
+        let progress = SessionProgress(completed: 0, goal: request.goal, partial: 0)
+        XCTAssertTrue(BalanceRenderPolling.shouldPoll(
+            isDemo: false,
+            phase: .active(request: request, progress: progress, provenance: .live)
+        ))
+        XCTAssertTrue(BalanceRenderPolling.shouldPoll(
+            isDemo: false,
+            phase: .paused(request: request, progress: progress, reason: .trackingLost(requiresRecalibration: false))
+        ))
+        XCTAssertFalse(BalanceRenderPolling.shouldPoll(
+            isDemo: true,
+            phase: .active(request: request, progress: progress, provenance: .demo)
+        ))
+    }
+    // Break caught: adding a new exercise without its clinician-prescribed goal
+    // can route it through the shared session with an unrelated dose.
+    func testSheepDropUsesItsPrescribedExerciseContract() {
+        XCTAssertEqual(ExerciseKind.sheepDrop.title, "Sheep Drop")
+        XCTAssertEqual(Prescription.demo.sheepDropRepetitions, 5)
+        XCTAssertEqual(
+            Prescription.demo.sessionRequest(for: .exercise(.sheepDrop)).goal,
+            5
+        )
+        XCTAssertEqual(GameplayResult.fixture(for: .sheepDrop).exercise, .sheepDrop)
+    }
+
+    // Break caught: adding Sheep Drop to the prescription without an explicit
+    // shared immersive route can leave an authorized request in the empty host.
+    func testSharedImmersiveRoutingSelectsEveryAuthorizedExperience() {
+        let routes = [
+            SharedRehabImmersiveRoute.resolve(request(for: .exercise(.balance))),
+            SharedRehabImmersiveRoute.resolve(request(for: .exercise(.squeeze))),
+            SharedRehabImmersiveRoute.resolve(request(for: .exercise(.sheepDrop))),
+            SharedRehabImmersiveRoute.resolve(request(for: .wristAssessment)),
+            SharedRehabImmersiveRoute.resolve(request(for: .handAssessment))
+        ]
+
+        XCTAssertEqual(
+            routes,
+            [.balance, .squeeze, .sheepDrop, .wristAssessment, .handAssessment]
+        )
+        XCTAssertEqual(SharedRehabImmersiveRoute.resolve(nil), .empty)
+    }
+
+    // Break caught: scene geometry or placement math can drift from the
+    // processor's pen-local floor-at-zero contract.
+    func testSheepDropSceneUsesReferenceGeometryAndPenLocalCoordinates() throws {
+        XCTAssertEqual(SheepDropSceneConfiguration.gravity, [0, -6, 0])
+        XCTAssertEqual(SheepDropSceneConfiguration.tableSize, [1, 0.015, 0.7])
+        XCTAssertEqual(SheepDropSceneConfiguration.penSide, 0.36)
+        XCTAssertEqual(SheepDropSceneConfiguration.fenceHeight, 0.07)
+        XCTAssertEqual(SheepDropSceneConfiguration.fenceThickness, 0.012)
+        XCTAssertEqual(SheepDropSceneConfiguration.spawnPadSide, 0.26)
+        XCTAssertEqual(SheepDropSceneConfiguration.spawnPadGap, 0.025)
+        XCTAssertEqual(SheepDropSceneConfiguration.spawnPosition.x, 0.335, accuracy: 0.000_001)
+        XCTAssertEqual(SheepDropSceneConfiguration.floorY, 0)
+
+        var placement = simd_float4x4(
+            simd_quatf(angle: .pi / 2, axis: [0, 1, 0])
+        )
+        placement.columns.3 = SIMD4<Float>(0.4, 0.73, -0.6, 1)
+        let coordinates = try XCTUnwrap(
+            SheepDropCoordinateSpace(tableTransform: placement)
+        )
+        let expectedWorld = SIMD3<Float>(0.4, 0.785, -0.935)
+
+        XCTAssertEqual(
+            coordinates.worldPosition(fromPenLocal: [0.335, 0.055, 0]).x,
+            expectedWorld.x,
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(
+            coordinates.worldPosition(fromPenLocal: [0.335, 0.055, 0]).y,
+            expectedWorld.y,
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(
+            coordinates.worldPosition(fromPenLocal: [0.335, 0.055, 0]).z,
+            expectedWorld.z,
+            accuracy: 0.000_001
+        )
+        let local = coordinates.penLocalPosition(fromWorld: expectedWorld)
+        XCTAssertEqual(local.x, 0.335, accuracy: 0.000_001)
+        XCTAssertEqual(local.y, 0.055, accuracy: 0.000_001)
+        XCTAssertEqual(local.z, 0, accuracy: 0.000_001)
+        let localVelocity = coordinates.penLocalVelocity(fromWorld: [0.2, -0.1, 0])
+        XCTAssertEqual(localVelocity.x, 0, accuracy: 0.000_001)
+        XCTAssertEqual(localVelocity.y, -0.1, accuracy: 0.000_001)
+        XCTAssertEqual(localVelocity.z, 0.2, accuracy: 0.000_001)
+    }
+
+    // Break caught: accepting later plane updates after pickup can move the
+    // physical pen while a kinematic sheep is already in the user's hand.
+    func testSheepDropPlacementLocksAtFirstPickup() {
+        let first = TablePlacement(
+            transform: simd_float4x4(translation: [0, 0.73, -0.55]),
+            source: .estimated
+        )
+        let later = TablePlacement(
+            transform: simd_float4x4(translation: [0.2, 0.8, -0.4]),
+            source: .detected
+        )
+        var state = SheepDropPlacementState()
+
+        state.receive(first)
+        state.lockAtFirstPickup()
+        state.receive(later)
+        state.receive(nil)
+
+        XCTAssertEqual(state.placement, first)
+        XCTAssertTrue(state.isLocked)
+    }
+
+    // Break caught: retaining an unlocked placement after the selector removes
+    // it leaves the pen visible and interactive at an obsolete table pose.
+    func testSheepDropUnlockedPlacementMirrorsRemovalAndAcceptsReplacement() {
+        let detected = TablePlacement(
+            transform: simd_float4x4(translation: [0, 0.73, -0.55]),
+            source: .detected
+        )
+        let fallback = TablePlacement(
+            transform: simd_float4x4(translation: [0, 0.74, -0.6]),
+            source: .estimated
+        )
+        var state = SheepDropPlacementState()
+
+        state.receive(detected)
+        XCTAssertTrue(state.isPlacementAvailable)
+
+        state.receive(nil)
+        XCTAssertNil(state.placement)
+        XCTAssertFalse(state.isPlacementAvailable)
+
+        state.receive(fallback)
+        XCTAssertEqual(state.placement, fallback)
+        XCTAssertTrue(state.isPlacementAvailable)
+    }
+
+    // Break caught: a removed or changed unlocked placement can leave a
+    // forming-grasp dwell alive across a period with no valid table scene.
+    func testSheepDropPlacementChangeInvalidatesPartialInteraction() {
+        let detected = TablePlacement(
+            transform: simd_float4x4(translation: [0, 0.73, -0.55]),
+            source: .detected
+        )
+        let replacement = TablePlacement(
+            transform: simd_float4x4(translation: [0.1, 0.74, -0.5]),
+            source: .estimated
+        )
+        var state = SheepDropPlacementState()
+
+        XCTAssertEqual(state.receive(detected), .acquired)
+        XCTAssertEqual(state.receive(nil), .invalidated)
+        XCTAssertEqual(state.receive(replacement), .acquired)
+        XCTAssertEqual(state.receive(replacement), .unchanged)
+    }
+
+    // Break caught: render passes can repeatedly submit one retained frame
+    // with fresh render timestamps and incorrectly satisfy gesture dwell.
+    func testSheepDropFrameChronologyConsumesEachObservationOnlyOnce() {
+        var chronology = SheepDropInputChronology()
+        let first = HandJointFrame.synthetic(
+            hand: .right,
+            timestamp: 4,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )
+        let newer = HandJointFrame.synthetic(
+            hand: .right,
+            timestamp: 4.1,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )
+
+        XCTAssertEqual(chronology.consume(first)?.timestamp, 4)
+        XCTAssertNil(chronology.consume(first))
+        XCTAssertNil(chronology.consume(HandJointFrame.synthetic(
+            hand: .right,
+            timestamp: 3.9,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )))
+        XCTAssertEqual(chronology.consume(newer)?.timestamp, 4.1)
+    }
+
+    // Break caught: RealityKit render repetitions can process one retained
+    // Balance observation more than once and complete the 25-frame hold early.
+    func testBalanceInputChronologyRejectsDuplicateAndRegressedTimestamps() {
+        var chronology = BalanceInputChronology()
+        let first = calibratedFrame(hand: .right, timestamp: 4)
+        let newer = calibratedFrame(hand: .right, timestamp: 4.1)
+
+        XCTAssertEqual(chronology.consume(first)?.timestamp, 4)
+        XCTAssertNil(chronology.consume(first))
+        XCTAssertNil(chronology.consume(calibratedFrame(hand: .right, timestamp: 3.9)))
+        XCTAssertEqual(chronology.consume(newer)?.timestamp, 4.1)
+    }
+
+    // Break caught: repeatedly observing one reset generation can clear the
+    // neutral and reset the physics ball on every render update.
+    func testBalanceViewTrackingStateBeginsEachResetGenerationExactlyOnce() {
+        var state = BalanceViewTrackingState()
+
+        XCTAssertTrue(state.beginProcessorReset(generation: 7))
+        XCTAssertFalse(state.beginProcessorReset(generation: 7))
+        XCTAssertTrue(state.beginProcessorReset(generation: 8))
+        XCTAssertFalse(state.beginProcessorReset(generation: 8))
+    }
+
+    // Break caught: frame 26 and later can repeatedly attempt calibration
+    // acknowledgement while the user-confirmation pause is still visible.
+    func testBalanceCalibrationAcknowledgementIsTakenOncePerResetGeneration() {
+        var state = BalanceViewTrackingState()
+
+        XCTAssertTrue(state.beginProcessorReset(generation: 7))
+        XCTAssertTrue(state.takeCalibrationAcknowledgement(generation: 7))
+        XCTAssertFalse(state.takeCalibrationAcknowledgement(generation: 7))
+        XCTAssertFalse(state.takeCalibrationAcknowledgement(generation: 8))
+        XCTAssertFalse(state.beginProcessorReset(generation: 7))
+        XCTAssertFalse(state.takeCalibrationAcknowledgement(generation: 7))
+
+        XCTAssertTrue(state.beginProcessorReset(generation: 8))
+        XCTAssertTrue(state.takeCalibrationAcknowledgement(generation: 8))
+        XCTAssertFalse(state.takeCalibrationAcknowledgement(generation: 8))
+    }
+
+    // Break caught: Demo Mode can replay its initial timestamp and either
+    // calibrate from render cadence or never complete the real 25-frame path.
+    @MainActor
+    func testBalanceDemoCalibrationFramesAreDistinctAndUseTheLiveProcessorPath() throws {
+        let source = SyntheticMovementSource(hand: .right)
+        var trackingState = BalanceViewTrackingState()
+        var session = BalanceSession(prescription: .demo, seed: 4)
+        var timestamps: [TimeInterval] = []
+
+        for index in 1...25 {
+            source.setBalanceCalibrationPose(at: Double(index) / 60)
+            let frame = try XCTUnwrap(trackingState.consume(source.latestJointFrame))
+            timestamps.append(frame.timestamp)
+            _ = session.process(
+                frame: frame,
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            )
         }
-        XCTAssertTrue(schedule.targets.allSatisfy { abs($0.x) <= 0.21 && abs($0.z) <= 0.135 })
-        XCTAssertFalse(zip(schedule.targets, schedule.targets.dropFirst()).contains { $0.quadrant == $1.quadrant })
-        XCTAssertEqual(schedule, BalanceTargetSchedule(seed: 42))
+
+        XCTAssertEqual(Set(timestamps).count, 25)
+        XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(session.requiredJoints, [.wrist])
     }
 
-    @MainActor func testMovingHoleRequiresContinuousDwellAndPausesWhenTrackingIsLost() {
-        var session = MovingHoleBalanceSession(seed: 7, requiredRepetitions: 2, dwellSeconds: 0.5)
-        XCTAssertFalse(session.update(ballPosition: session.currentTarget.position, at: 0, isTracked: true))
-        XCTAssertFalse(session.update(ballPosition: session.currentTarget.position, at: 0.3, isTracked: false))
-        XCTAssertFalse(session.update(ballPosition: session.currentTarget.position, at: 0.6, isTracked: true))
-        XCTAssertFalse(session.update(ballPosition: session.currentTarget.position, at: 1.11, isTracked: true))
-        XCTAssertEqual(session.completedRepetitions, 1)
+    // Break caught: the explicit Demo drop can move only the rendered ball
+    // without submitting a fresh processor frame, leaving progress unchanged.
+    @MainActor
+    func testBalanceDemoDropUsesAFreshFrameToAdvanceTheSessionResultPath() throws {
+        let source = SyntheticMovementSource(hand: .right)
+        var trackingState = BalanceViewTrackingState()
+        var session = BalanceSession(
+            affectedHand: .right,
+            goal: 1,
+            seed: 4,
+            isSimulated: true
+        )
+
+        for index in 1...25 {
+            source.setBalanceCalibrationPose(at: Double(index) / 60)
+            _ = session.process(
+                frame: trackingState.consume(source.latestJointFrame),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            )
+        }
+        var nextTimestamp = 26.0 / 60
+        let event = BalanceFallbackRepAction.process(
+            source: source,
+            nextTimestamp: &nextTimestamp,
+            trackingState: &trackingState,
+            session: &session
+        )
+
+        guard case .scored(completed: 1, goal: 1, _, isComplete: true) = event else {
+            return XCTFail("Expected the Demo drop to score through BalanceSession")
+        }
+        XCTAssertEqual(session.result?.completedDose, 1)
+        XCTAssertEqual(session.result?.trackingNote, "Simulated from explicit Demo Mode physics ball drops")
     }
 
-    func testBalanceScheduleDistributesEveryDirectionEqually() {
-        for corrections in 1...4 {
-            let schedule = BalanceSchedule(correctionsPerDirection: corrections, shuffle: false)
-            for direction in WristDirection.allCases {
-                XCTAssertEqual(schedule.directions.filter { $0 == direction }.count, corrections)
+    // Break caught: gating the fallback action on Demo provenance leaves a
+    // live authorized test with no way to exercise one processor-backed rep.
+    @MainActor
+    func testBalanceFallbackRepAlsoAdvancesALiveSessionThroughTheProcessor() {
+        let source = SyntheticMovementSource(hand: .right)
+        var trackingState = BalanceViewTrackingState()
+        var session = BalanceSession(
+            affectedHand: .right,
+            goal: 2,
+            seed: 8,
+            isSimulated: false
+        )
+        var nextTimestamp = 1.0 / 60
+        XCTAssertNotNil(trackingState.consume(calibratedFrame(
+            hand: .right,
+            timestamp: 100
+        )))
+
+        let event = BalanceFallbackRepAction.process(
+            source: source,
+            nextTimestamp: &nextTimestamp,
+            trackingState: &trackingState,
+            session: &session
+        )
+
+        guard case .scored(completed: 1, goal: 2, _, isComplete: false) = event else {
+            return XCTFail("Expected one processor-backed live fallback rep")
+        }
+        XCTAssertEqual(session.completedSuccesses, 1)
+        XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(nextTimestamp, 100 + 27.0 / 60, accuracy: 0.000_001)
+    }
+
+    // Break caught: provenance-gating or completion-blind presentation can
+    // hide the assisted control in live sessions or leave it enabled at goal.
+    func testBalanceAssistedControlIsVisibleForAuthorizedLiveAndDemoSessionsAndDisabledAtGoal() {
+        XCTAssertEqual(BalanceFallbackControl.title, "Complete Rep (Assisted)")
+        XCTAssertFalse(BalanceFallbackControl.isVisible(hasAuthorizedSession: false))
+        XCTAssertTrue(BalanceFallbackControl.isVisible(hasAuthorizedSession: true))
+        XCTAssertTrue(BalanceFallbackControl.isEnabled(
+            hasAuthorizedSession: true,
+            isComplete: false
+        ))
+        XCTAssertFalse(BalanceFallbackControl.isEnabled(
+            hasAuthorizedSession: true,
+            isComplete: true
+        ))
+        XCTAssertFalse(BalanceFallbackControl.isEnabled(
+            hasAuthorizedSession: false,
+            isComplete: false
+        ))
+    }
+
+    // Break caught: deriving assisted authorization from activeRequest alone
+    // enables synthetic reps during starting, failed, or completed phases.
+    func testBalanceAssistedControlPhaseMatrixAllowsOnlyActiveAndTrackingPausedBalance() {
+        let balance = RehabSessionRequest(experience: .exercise(.balance), prescription: .demo)
+        let squeeze = RehabSessionRequest(experience: .exercise(.squeeze), prescription: .demo)
+        let progress = SessionProgress(completed: 0, goal: balance.goal, partial: 0)
+        let failure = SessionFailure(
+            request: balance,
+            reason: .liveTrackingUnavailable,
+            recoveryActions: [.enterDemoMode, .cancel]
+        )
+        let completed = RehabSessionOutcome(
+            request: balance,
+            progress: SessionProgress(completed: balance.goal, goal: balance.goal, partial: 0),
+            provenance: .live,
+            payload: .gameplay(GameplayResult(
+                exercise: .balance,
+                prescribedDose: balance.goal,
+                completedDose: balance.goal,
+                trackingNote: "Fixture"
+            ))
+        )
+
+        XCTAssertFalse(BalanceFallbackControl.isSessionAuthorized(.idle))
+        XCTAssertFalse(BalanceFallbackControl.isSessionAuthorized(.starting(balance)))
+        XCTAssertTrue(BalanceFallbackControl.isSessionAuthorized(.active(
+            request: balance,
+            progress: progress,
+            provenance: .live
+        )))
+        XCTAssertTrue(BalanceFallbackControl.isSessionAuthorized(.active(
+            request: balance,
+            progress: progress,
+            provenance: .demo
+        )))
+        XCTAssertTrue(BalanceFallbackControl.isSessionAuthorized(.paused(
+            request: balance,
+            progress: progress,
+            reason: .trackingLost(requiresRecalibration: false)
+        )))
+        XCTAssertTrue(BalanceFallbackControl.isSessionAuthorized(.paused(
+            request: balance,
+            progress: progress,
+            reason: .trackingLost(requiresRecalibration: true)
+        )))
+        XCTAssertFalse(BalanceFallbackControl.isSessionAuthorized(.active(
+            request: squeeze,
+            progress: SessionProgress(completed: 0, goal: squeeze.goal, partial: 0),
+            provenance: .live
+        )))
+        XCTAssertFalse(BalanceFallbackControl.isSessionAuthorized(.failed(failure)))
+        XCTAssertFalse(BalanceFallbackControl.isSessionAuthorized(.completed(completed)))
+    }
+
+    // Break caught: a retained open frame can be replayed across render time
+    // until the processor's release dwell completes without another sample.
+    func testRepeatedRetainedFrameCannotAdvanceReleaseDwell() throws {
+        let spawn = SheepDropSceneConfiguration.spawnPosition
+        let source = SyntheticMovementSource(hand: .right)
+        var chronology = SheepDropInputChronology()
+        var session = SheepDropSession(
+            affectedHand: .right,
+            goal: 1,
+            spawnPosition: spawn,
+            sheepCollisionRadius: SheepDropSceneConfiguration.sheepCollisionRadius
+        )
+        let resting = SheepDropObservation(
+            position: spawn,
+            velocity: .zero,
+            isRestingOnSpawnSurface: true,
+            isOutsideSafeVolume: false
+        )
+
+        source.setSheepDropPose(.clustered, centeredAt: spawn, at: 0)
+        _ = session.process(
+            frame: try XCTUnwrap(chronology.consume(source.latestJointFrame)),
+            observation: resting,
+            at: 0
+        )
+        source.setSheepDropPose(.clustered, centeredAt: spawn, at: 0.25)
+        _ = session.process(
+            frame: try XCTUnwrap(chronology.consume(source.latestJointFrame)),
+            observation: resting,
+            at: 0.25
+        )
+
+        source.setSheepDropPose(.open, centeredAt: spawn, at: 0.4)
+        let retainedOpen = try XCTUnwrap(chronology.consume(source.latestJointFrame))
+        _ = session.process(
+            frame: retainedOpen,
+            observation: resting,
+            at: retainedOpen.timestamp
+        )
+        XCTAssertNil(chronology.consume(source.latestJointFrame))
+        XCTAssertEqual(session.phase, .carrying)
+
+        source.setSheepDropPose(.open, centeredAt: spawn, at: 0.55)
+        let freshOpen = try XCTUnwrap(chronology.consume(source.latestJointFrame))
+        XCTAssertEqual(
+            session.process(
+                frame: freshOpen,
+                observation: resting,
+                at: freshOpen.timestamp
+            ).event,
+            .released
+        )
+    }
+
+    // Break caught: reacquiring a table after a placement gap can count time
+    // spent without a valid scene toward the original pickup dwell.
+    func testPlacementGapDiscardsFormingGraspDwell() throws {
+        let spawn = SheepDropSceneConfiguration.spawnPosition
+        let source = SyntheticMovementSource(hand: .right)
+        var session = SheepDropSession(
+            affectedHand: .right,
+            goal: 1,
+            spawnPosition: spawn,
+            sheepCollisionRadius: SheepDropSceneConfiguration.sheepCollisionRadius
+        )
+        let resting = SheepDropObservation(
+            position: spawn,
+            velocity: .zero,
+            isRestingOnSpawnSurface: true,
+            isOutsideSafeVolume: false
+        )
+        source.setSheepDropPose(.clustered, centeredAt: spawn, at: 0)
+        XCTAssertEqual(
+            session.process(
+                frame: source.latestJointFrame,
+                observation: resting,
+                at: 0
+            ).event,
+            .formingGrasp
+        )
+
+        var placement = SheepDropPlacementState()
+        _ = placement.receive(.estimatedReference)
+        XCTAssertEqual(placement.receive(nil), .invalidated)
+        _ = session.pause(requiresRecalibration: false)
+        _ = placement.receive(.estimatedReference)
+
+        source.setSheepDropPose(.clustered, centeredAt: spawn, at: 0.30)
+        XCTAssertEqual(
+            session.process(
+                frame: source.latestJointFrame,
+                observation: resting,
+                at: 0.30
+            ).event,
+            .formingGrasp
+        )
+        XCTAssertEqual(session.progress.partial, 0)
+    }
+
+    // Break caught: independent X/Z bounds form a square and accept diagonal
+    // positions farther than the approved 0.65 m horizontal radius.
+    func testSheepDropSafeVolumeUsesRadialHorizontalBoundary() {
+        XCTAssertFalse(SheepDropSceneConfiguration.isOutsideSafeVolume(
+            [0.45, 0.2, 0.45]
+        ))
+        XCTAssertTrue(SheepDropSceneConfiguration.isOutsideSafeVolume(
+            [0.60, 0.2, 0.60]
+        ))
+        XCTAssertTrue(SheepDropSceneConfiguration.isOutsideSafeVolume(
+            [0, SheepDropSceneConfiguration.safeMaximumY + 0.001, 0]
+        ))
+    }
+
+    // Break caught: generic phase copy can hide tracking provenance, table
+    // estimation, or the explicit five-finger release instruction.
+    func testSheepDropHUDUsesApprovedCopyAndDisclosure() {
+        XCTAssertEqual(
+            SheepDropHUDPresentation(
+                phase: .findingTable,
+                pauseReason: nil,
+                provenance: .live,
+                tableSource: nil,
+                isOverPen: false
+            ).instruction,
+            "Finding a table…"
+        )
+        let live = SheepDropHUDPresentation(
+            phase: .carrying,
+            pauseReason: nil,
+            provenance: .live,
+            tableSource: .detected,
+            isOverPen: true
+        )
+        XCTAssertEqual(live.provenanceLabel, "LIVE HAND TRACKING")
+        XCTAssertEqual(live.tableLabel, "TABLE DETECTED")
+        XCTAssertEqual(live.instruction, "Spread your fingers to release.")
+
+        let demo = SheepDropHUDPresentation(
+            phase: .paused,
+            pauseReason: .trackingLost(requiresRecalibration: true),
+            provenance: .demo,
+            tableSource: .estimated,
+            isOverPen: false
+        )
+        XCTAssertEqual(demo.provenanceLabel, "DEMO FALLBACK — SIMULATED")
+        XCTAssertEqual(demo.tableLabel, "TABLE ESTIMATED")
+        XCTAssertEqual(demo.instruction, "Recalibration required.")
+    }
+
+    // Break caught: forwarding a Demo action unconditionally renders an inert
+    // Demo Mode button during live hand-tracking sessions.
+    func testSheepDropHUDOnlyOffersDemoActionInDemoMode() {
+        let actionTitle = "Open hand near spawn (Demo Mode)"
+        let live = SheepDropHUDPresentation(
+            phase: .waitingForHand,
+            pauseReason: nil,
+            provenance: .live,
+            tableSource: .detected,
+            isOverPen: false,
+            requestedDemoActionTitle: actionTitle
+        )
+        let demo = SheepDropHUDPresentation(
+            phase: .waitingForHand,
+            pauseReason: nil,
+            provenance: .demo,
+            tableSource: .estimated,
+            isOverPen: false,
+            requestedDemoActionTitle: actionTitle
+        )
+
+        XCTAssertNil(live.demoActionTitle)
+        XCTAssertEqual(demo.demoActionTitle, actionTitle)
+    }
+
+    // Break caught: a Demo button can bypass the grasp/release processor and
+    // increment progress directly instead of publishing five-fingertip frames.
+    func testSheepDropDemoFramesPassThroughTheRealProcessorWithoutDirectScoring() throws {
+        let spawn = SheepDropSceneConfiguration.spawnPosition
+        let source = SyntheticMovementSource(hand: .right)
+        var session = SheepDropSession(
+            affectedHand: .right,
+            goal: 1,
+            isSimulated: true,
+            spawnPosition: spawn,
+            sheepCollisionRadius: SheepDropSceneConfiguration.sheepCollisionRadius
+        )
+        let resting = SheepDropObservation(
+            position: spawn,
+            velocity: .zero,
+            isRestingOnSpawnSurface: true,
+            isOutsideSafeVolume: false
+        )
+
+        source.setSheepDropPose(.clustered, centeredAt: spawn, at: 0)
+        XCTAssertEqual(
+            session.process(frame: source.latestJointFrame, observation: resting, at: 0).event,
+            .formingGrasp
+        )
+        source.setSheepDropPose(.clustered, centeredAt: spawn, at: 0.25)
+        XCTAssertEqual(
+            session.process(frame: source.latestJointFrame, observation: resting, at: 0.25).event,
+            .pickupBegan
+        )
+
+        let overPen = SIMD3<Float>(0, 0.2, 0)
+        source.setSheepDropPose(.clustered, centeredAt: overPen, at: 0.5)
+        XCTAssertEqual(
+            session.process(
+                frame: source.latestJointFrame,
+                observation: SheepDropObservation(
+                    position: spawn,
+                    velocity: .zero,
+                    isRestingOnSpawnSurface: false,
+                    isOutsideSafeVolume: false
+                ),
+                at: 0.5
+            ).event,
+            .carrying
+        )
+        source.setSheepDropPose(.open, centeredAt: overPen, at: 0.6)
+        _ = session.process(
+            frame: source.latestJointFrame,
+            observation: SheepDropObservation(
+                position: overPen,
+                velocity: .zero,
+                isRestingOnSpawnSurface: false,
+                isOutsideSafeVolume: false
+            ),
+            at: 0.6
+        )
+        source.setSheepDropPose(.open, centeredAt: overPen, at: 0.75)
+        XCTAssertEqual(
+            session.process(
+                frame: source.latestJointFrame,
+                observation: SheepDropObservation(
+                    position: overPen,
+                    velocity: .zero,
+                    isRestingOnSpawnSurface: false,
+                    isOutsideSafeVolume: false
+                ),
+                at: 0.75
+            ).event,
+            .released
+        )
+        XCTAssertEqual(session.completedDrops, 0)
+        XCTAssertNil(session.result)
+    }
+
+    // Break caught: hard-coding the prototype's old eight targets ignores the clinician prescription.
+    func testBalanceUsesThePrescriptionTenTargetGoal() {
+        let session = BalanceSession(prescription: .demo, seed: 42)
+
+        XCTAssertEqual(Prescription.demo.balanceTargetCount, 10)
+        XCTAssertEqual(session.goal, 10)
+        XCTAssertEqual(session.schedule.targets.count, 10)
+        XCTAssertEqual(session.progress, SessionProgress(completed: 0, goal: 10, partial: 0))
+    }
+
+    // Break caught: an unsafe or non-deterministic spawn can overlap the ball or place the hole outside the walls.
+    func testBalanceTargetsAreDeterministicAndSafelySeparatedFromTheBallSpawn() {
+        let schedule = BalanceTargetSchedule(seed: 42, targetCount: 10)
+
+        XCTAssertEqual(schedule, BalanceTargetSchedule(seed: 42, targetCount: 10))
+        XCTAssertTrue(schedule.targets.allSatisfy { target in
+            abs(target.x) <= 0.09 &&
+            abs(target.z) <= 0.09 &&
+            simd_distance(target.position, SIMD2<Float>(0, -0.066)) >= 0.084
+        })
+    }
+
+    // Break caught: restoring the prototype's fixed world height makes the
+    // platform too low or too high for viewers whose eye height differs.
+    func testBalancePlatformPlacementUsesViewerHeightWithinSafetyBounds() {
+        XCTAssertEqual(
+            BalancePlatformPlacement.position(viewerPosition: [0.2, 1.6, 0.1]),
+            [0, 1.2, -1]
+        )
+        XCTAssertEqual(
+            BalancePlatformPlacement.position(viewerPosition: [0, 1.1, 0]),
+            [0, 0.85, -1]
+        )
+        XCTAssertEqual(
+            BalancePlatformPlacement.position(viewerPosition: [0, 0.8, 0]),
+            [0, 0.72, -1]
+        )
+        XCTAssertEqual(
+            BalancePlatformPlacement.position(viewerPosition: nil),
+            [0, 0.9, -1]
+        )
+    }
+
+    // Break caught: applying later head poses after scene creation makes the
+    // physical tray and HUD drift while a ball attempt is in progress.
+    func testBalancePlatformPlacementLatchKeepsTheFirstViewerPose() {
+        var latch = BalancePlatformPlacementLatch()
+
+        let first = latch.lock(viewerPosition: [0.2, 1.1, 0.1])
+        let later = latch.lock(viewerPosition: [3, 1.6, 4])
+        let unavailable = latch.lock(viewerPosition: nil)
+
+        XCTAssertEqual(first, [0, 0.85, -1])
+        XCTAssertEqual(later, first)
+        XCTAssertEqual(unavailable, first)
+        XCTAssertEqual(latch.position, first)
+    }
+
+    // Break caught: accepting fewer than 25 unique level-hand samples makes a
+    // transient pose the neutral reference instead of requiring a stable hold.
+    func testBalanceCalibrationRequiresTwentyFiveUniqueConsecutiveValidFrames() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+
+        XCTAssertEqual(session.calibrationFrameGoal, 25)
+        for index in 0..<24 {
+            XCTAssertEqual(
+                session.process(
+                    frame: calibratedFrame(hand: .right, timestamp: Double(index)),
+                    ballPosition: BalanceTargetSchedule.ballStart,
+                    ballEscaped: false
+                ),
+                .waitingForCalibration
+            )
+            XCTAssertEqual(session.calibrationProgress, index + 1)
+        }
+        XCTAssertFalse(session.isCalibrated)
+
+        let capturedWrist = MovementMath.wristTransform(pitch: 0.18, roll: -0.12, yaw: 0.3)
+        guard case let .active(capturedTilt) = session.process(
+            frame: calibratedFrame(hand: .right, timestamp: 24, wrist: capturedWrist),
+            ballPosition: BalanceTargetSchedule.ballStart,
+            ballEscaped: false
+        ) else {
+            return XCTFail("Expected frame 25 to activate from its captured wrist neutral")
+        }
+        XCTAssertEqual(abs(simd_dot(capturedTilt.quaternion.vector, BalanceRotation.identity.quaternion.vector)), 1, accuracy: 0.0001)
+        XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(session.calibrationProgress, 25)
+    }
+
+    // Break caught: processing the same published tracking frame repeatedly
+    // can satisfy the hold without 25 distinct hand-tracking updates.
+    func testBalanceCalibrationDoesNotCountRepeatedTimestampsTwice() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+
+        _ = session.process(
+            frame: calibratedFrame(hand: .right, timestamp: 0),
+            ballPosition: BalanceTargetSchedule.ballStart,
+            ballEscaped: false
+        )
+        for _ in 0..<30 {
+            XCTAssertEqual(
+                session.process(
+                    frame: calibratedFrame(hand: .right, timestamp: 0),
+                    ballPosition: BalanceTargetSchedule.ballStart,
+                    ballEscaped: false
+                ),
+                .waitingForCalibration
+            )
+        }
+
+        XCTAssertEqual(session.calibrationProgress, 1)
+        XCTAssertFalse(session.isCalibrated)
+        for timestamp in 1..<24 {
+            _ = session.process(
+                frame: calibratedFrame(hand: .right, timestamp: Double(timestamp)),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            )
+        }
+        XCTAssertEqual(session.calibrationProgress, 24)
+        XCTAssertFalse(session.isCalibrated)
+        _ = session.process(
+            frame: calibratedFrame(hand: .right, timestamp: 24),
+            ballPosition: BalanceTargetSchedule.ballStart,
+            ballEscaped: false
+        )
+        XCTAssertTrue(session.isCalibrated)
+    }
+
+    // Break caught: suppressing a duplicate before pose validation lets an
+    // invalid same-timestamp frame preserve an unfinished calibration streak.
+    func testBalanceInvalidDuplicateResetsProgressBeforeDuplicateSuppression() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        advanceBalanceCalibration(&session, through: 9)
+        XCTAssertEqual(session.calibrationProgress, 10)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(
+                    hand: .right,
+                    timestamp: 9,
+                    omit: .littleFingerKnuckle
+                ),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            ),
+            .waitingForCalibration
+        )
+
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+    }
+
+    // Break caught: a missing frame between level-hand samples can leave the
+    // old partial hold alive and calibrate from nonconsecutive observations.
+    func testBalanceCalibrationMissingFrameResetsProgress() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        advanceBalanceCalibration(&session, through: 9)
+
+        XCTAssertEqual(
+            session.process(frame: nil, ballPosition: .zero, ballEscaped: false),
+            .waitingForCalibration
+        )
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+    }
+
+    // Break caught: an unaffected-hand sample between valid samples can leave
+    // the affected hand's partial calibration hold intact.
+    func testBalanceCalibrationWrongHandFrameResetsProgress() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        advanceBalanceCalibration(&session, through: 9)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .left, timestamp: 10),
+                ballPosition: .zero,
+                ballEscaped: false
+            ),
+            .waitingForCalibration
+        )
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+    }
+
+    // Break caught: an incomplete hand pose can be ignored without breaking
+    // the stable-hold streak, allowing separated valid frames to calibrate.
+    func testBalanceCalibrationIncompletePoseResetsProgress() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        advanceBalanceCalibration(&session, through: 9)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(
+                    hand: .right,
+                    timestamp: 10,
+                    omit: .littleFingerKnuckle
+                ),
+                ballPosition: .zero,
+                ballEscaped: false
+            ),
+            .waitingForCalibration
+        )
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+    }
+
+    // Break caught: a fully tracked but nonlevel pose can be ignored without
+    // resetting the consecutive calibration sequence at the session boundary.
+    func testBalanceCalibrationNonlevelPoseResetsProgress() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        advanceBalanceCalibration(&session, through: 9)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(
+                    hand: .right,
+                    timestamp: 10,
+                    raisedKnuckle: .littleFingerKnuckle
+                ),
+                ballPosition: .zero,
+                ballEscaped: false
+            ),
+            .waitingForCalibration
+        )
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+    }
+
+    // Break caught: accepting an older frame after a newer one lets stale data
+    // extend the calibration hold and can capture an obsolete wrist transform.
+    func testBalanceCalibrationRegressedTimestampResetsProgress() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        advanceBalanceCalibration(&session, through: 9)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .right, timestamp: 8),
+                ballPosition: .zero,
+                ballEscaped: false
+            ),
+            .waitingForCalibration
+        )
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+    }
+
+    // Break caught: NaN or infinite timestamps can bypass ordering checks and
+    // poison chronology state while still contributing a valid-looking pose.
+    func testBalanceCalibrationNonfiniteTimestampResetsProgress() {
+        for timestamp in [TimeInterval.nan, .infinity, -.infinity] {
+            var session = BalanceSession(prescription: .demo, seed: 6)
+            advanceBalanceCalibration(&session, through: 9)
+
+            XCTAssertEqual(
+                session.process(
+                    frame: calibratedFrame(hand: .right, timestamp: timestamp),
+                    ballPosition: .zero,
+                    ballEscaped: false
+                ),
+                .waitingForCalibration
+            )
+            XCTAssertEqual(session.calibrationProgress, 0)
+            XCTAssertFalse(session.isCalibrated)
+        }
+    }
+
+    // Break caught: continuing to require calibration knuckles after neutral is
+    // captured makes ordinary wrist steering pause when fingers are occluded.
+    func testBalanceRequiredJointsSwitchFromCalibrationPoseToWristOnly() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+
+        XCTAssertEqual(session.requiredJoints, WristNeutralCalibration.requiredJoints)
+        calibrateBalance(&session)
+        XCTAssertEqual(session.requiredJoints, Set([HandJoint.wrist]))
+    }
+
+    // Break caught: post-calibration knuckle occlusion can pause usable wrist
+    // tracking even though only wrist orientation drives the tray.
+    func testBalanceActiveTrackingIgnoresMissingKnuckles() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        calibrateBalance(&session)
+
+        let calibrationKnuckles: [HandJoint] = [
+            .indexFingerKnuckle,
+            .middleFingerKnuckle,
+            .ringFingerKnuckle,
+            .littleFingerKnuckle
+        ]
+        for (offset, missingKnuckle) in calibrationKnuckles.enumerated() {
+            XCTAssertEqual(
+                session.process(
+                    frame: calibratedFrame(
+                        hand: .right,
+                        timestamp: Double(25 + offset),
+                        omit: missingKnuckle
+                    ),
+                    ballPosition: BalanceTargetSchedule.ballStart,
+                    ballEscaped: false
+                ),
+                .active(BalanceRotation.identity),
+                "Expected active wrist tracking with \(missingKnuckle.rawValue) missing"
+            )
+        }
+    }
+
+    // Break caught: requiring the wrist plus any one calibration knuckle after
+    // neutral capture pauses a valid wrist-only steering frame.
+    func testBalanceActiveTrackingAcceptsWristOnlyFrameAfterCalibration() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        calibrateBalance(&session)
+        let wristOnlyFrame = HandJointFrame.synthetic(
+            hand: .right,
+            timestamp: 29,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )
+
+        XCTAssertEqual(
+            session.process(
+                frame: wristOnlyFrame,
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            ),
+            .active(BalanceRotation.identity)
+        )
+        XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(session.requiredJoints, Set([HandJoint.wrist]))
+    }
+
+    // Break caught: a missing wrist can leave physics active using a stale
+    // transform even though the steering joint is unavailable.
+    func testBalanceActiveTrackingPausesWithoutWrist() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        calibrateBalance(&session)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .right, timestamp: 26, omit: .wrist),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            ),
+            .paused
+        )
+    }
+
+    // Break caught: calibration from the wrong hand or from fewer than four level knuckles can steer the prescribed exercise.
+    func testBalanceCalibratesOnlyFromTheAffectedHandAndFourLevelKnuckles() {
+        var session = BalanceSession(prescription: .demo, seed: 7)
+        let incomplete = calibratedFrame(hand: .right, wrist: matrix_identity_float4x4, omit: .littleFingerKnuckle)
+
+        XCTAssertEqual(session.process(frame: calibratedFrame(hand: .left), ballPosition: .zero, ballEscaped: false), .waitingForCalibration)
+        XCTAssertEqual(session.process(frame: incomplete, ballPosition: .zero, ballEscaped: false), .waitingForCalibration)
+        XCTAssertFalse(session.isCalibrated)
+
+        advanceBalanceCalibration(&session, through: 23)
+        let event = session.process(
+            frame: calibratedFrame(hand: .right, timestamp: 24),
+            ballPosition: .zero,
+            ballEscaped: false
+        )
+        XCTAssertEqual(event, .active(BalanceRotation.identity))
+        XCTAssertTrue(session.isCalibrated)
+    }
+
+    // Break caught: proximity outside the hole or tracking loss could increment progress, while a valid drop might fail to queue a reset.
+    func testBalanceScoresOnlyTrackedBallDropsAndQueuesTheNextBallReset() {
+        var session = BalanceSession(prescription: .demo, seed: 9)
+        let frame = calibratedFrame(hand: .right)
+        calibrateBalance(&session)
+
+        XCTAssertEqual(session.process(frame: nil, ballPosition: session.currentTarget.position, ballEscaped: false), .paused)
+        XCTAssertEqual(session.completedSuccesses, 0)
+        XCTAssertEqual(session.process(frame: frame, ballPosition: SIMD2<Float>(0.08, -0.066), ballEscaped: false), .resetBall(BalanceRotation.identity))
+        XCTAssertEqual(session.completedSuccesses, 0)
+        XCTAssertEqual(
+            session.process(frame: frame, ballPosition: BalanceTargetSchedule.ballStart, ballEscaped: false),
+            .active(BalanceRotation.identity)
+        )
+        XCTAssertEqual(session.completedSuccesses, 0)
+
+        let target = session.currentTarget.position
+        XCTAssertEqual(
+            session.process(frame: frame, ballPosition: target, ballEscaped: false),
+            .scored(completed: 1, goal: 10, tilt: BalanceRotation.identity, isComplete: false)
+        )
+        XCTAssertEqual(session.completedSuccesses, 1)
+    }
+
+    // Break caught: an escaped physics body can silently score or remain lost instead of returning to a safe spawn.
+    func testBalanceEscapeRequestsResetWithoutChangingScore() {
+        var session = BalanceSession(prescription: .demo, seed: 11)
+        let frame = calibratedFrame(hand: .right)
+        calibrateBalance(&session)
+
+        XCTAssertEqual(
+            session.process(frame: frame, ballPosition: SIMD2<Float>(1, 1), ballEscaped: true),
+            .resetBall(BalanceRotation.identity)
+        )
+        XCTAssertEqual(session.completedSuccesses, 0)
+    }
+
+    // Break caught: preserving partial calibration state across a brief pause
+    // lets two interrupted runs combine into the required consecutive hold.
+    func testBalanceBriefPauseClearsPartialCalibrationProgressAndTimestamp() {
+        var session = BalanceSession(prescription: .demo, seed: 12)
+        advanceBalanceCalibration(&session, through: 9)
+        XCTAssertEqual(session.calibrationProgress, 10)
+
+        session.pause(requiresRecalibration: false)
+
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+        for timestamp in 0..<24 {
+            XCTAssertEqual(
+                session.process(
+                    frame: calibratedFrame(hand: .right, timestamp: Double(timestamp)),
+                    ballPosition: BalanceTargetSchedule.ballStart,
+                    ballEscaped: false
+                ),
+                .waitingForCalibration
+            )
+        }
+        XCTAssertEqual(session.calibrationProgress, 24)
+        XCTAssertFalse(session.isCalibrated)
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .right, timestamp: 24),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            ),
+            .resetBall(BalanceRotation.identity)
+        )
+        XCTAssertTrue(session.isCalibrated)
+    }
+
+    // Break caught: a brief interruption can discard a valid neutral or resume
+    // a partially moving ball instead of preserving calibration and resetting it.
+    func testBalanceBriefLossRetainsCalibrationAndResetsBallOnRecovery() {
+        var session = BalanceSession(prescription: .demo, seed: 13)
+        let frame = calibratedFrame(hand: .right)
+        calibrateBalance(&session)
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .right, timestamp: 25),
+                ballPosition: session.currentTarget.position,
+                ballEscaped: false
+            ),
+            .scored(
+                completed: 1,
+                goal: 10,
+                tilt: BalanceRotation.identity,
+                isComplete: false
+            )
+        )
+        XCTAssertEqual(session.completedSuccesses, 1)
+
+        session.pause(requiresRecalibration: false)
+        XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(session.calibrationProgress, 25)
+        XCTAssertEqual(session.completedSuccesses, 1)
+        XCTAssertEqual(session.process(frame: nil, ballPosition: .zero, ballEscaped: false), .paused)
+        XCTAssertEqual(session.process(frame: frame, ballPosition: .zero, ballEscaped: false), .resetBall(BalanceRotation.identity))
+        XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(session.completedSuccesses, 1)
+    }
+
+    // Break caught: a long interruption can retain an obsolete neutral, accept
+    // fewer than 25 replacement frames, or erase already completed targets.
+    func testBalanceLongLossRequiresNewCalibrationWithoutErasingCompletedProgress() {
+        var session = BalanceSession(prescription: .demo, seed: 13)
+        calibrateBalance(&session)
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .right, timestamp: 25),
+                ballPosition: session.currentTarget.position,
+                ballEscaped: false
+            ),
+            .scored(
+                completed: 1,
+                goal: 10,
+                tilt: BalanceRotation.identity,
+                isComplete: false
+            )
+        )
+
+        session.pause(requiresRecalibration: true)
+        XCTAssertFalse(session.isCalibrated)
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertEqual(session.completedSuccesses, 1)
+        XCTAssertEqual(session.process(frame: nil, ballPosition: .zero, ballEscaped: false), .paused)
+        for timestamp in 100..<124 {
+            XCTAssertEqual(
+                session.process(
+                    frame: calibratedFrame(hand: .right, timestamp: Double(timestamp)),
+                    ballPosition: BalanceTargetSchedule.ballStart,
+                    ballEscaped: false
+                ),
+                .waitingForCalibration
+            )
+        }
+        XCTAssertFalse(session.isCalibrated)
+        XCTAssertEqual(session.calibrationProgress, 24)
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .right, timestamp: 124),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            ),
+            .resetBall(BalanceRotation.identity)
+        )
+        XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(session.completedSuccesses, 1)
+    }
+
+    // Mutation caught: yaw stripping or pitch/roll clamping diverges from the
+    // reference project's full hand-anchor quaternion delta.
+    func testBalanceRotationIsNeutralRelativeAndPreservesFullQuaternion() {
+        let neutral = MovementMath.wristTransform(pitch: 0.18, roll: -0.12, yaw: 0.3)
+        var session = BalanceSession(prescription: .demo, seed: 15)
+        calibrateBalance(&session, wrist: neutral)
+
+        let yawOnly = simd_mul(MovementMath.wristTransform(pitch: 0, roll: 0, yaw: 0.7), neutral)
+        guard case let .active(yawTilt) = session.process(
+            frame: calibratedFrame(hand: .right, wrist: yawOnly),
+            ballPosition: BalanceTargetSchedule.ballStart,
+            ballEscaped: false
+        ) else {
+            return XCTFail("Expected active full rotation")
+        }
+        let expectedYaw = simd_quatf(yawOnly) * simd_quatf(neutral).inverse
+        XCTAssertEqual(abs(simd_dot(yawTilt.quaternion.vector, expectedYaw.vector)), 1, accuracy: 0.0001)
+
+        let excessive = MovementMath.wristTransform(pitch: 0.8, roll: -0.7, yaw: 0.4)
+        guard case let .active(tilt) = session.process(
+            frame: calibratedFrame(hand: .right, wrist: excessive),
+            ballPosition: BalanceTargetSchedule.ballStart,
+            ballEscaped: false
+        ) else {
+            return XCTFail("Expected active calibrated tilt")
+        }
+        let expected = simd_quatf(excessive) * simd_quatf(neutral).inverse
+        XCTAssertEqual(abs(simd_dot(tilt.quaternion.vector, expected.vector)), 1, accuracy: 0.0001)
+    }
+
+    // Break caught: completing the target count with a fixture result loses the measured prescribed/completed dose.
+    func testBalanceCompletionProducesAMeasuredGameplayResult() throws {
+        var session = BalanceSession(prescription: .demo, seed: 17)
+        let frame = calibratedFrame(hand: .right)
+        calibrateBalance(&session)
+
+        for expected in 1...10 {
+            let event = session.process(frame: frame, ballPosition: session.currentTarget.position, ballEscaped: false)
+            guard case let .scored(completed, goal, _, isComplete) = event else {
+                return XCTFail("Expected scored event")
             }
+            XCTAssertEqual(completed, expected)
+            XCTAssertEqual(goal, 10)
+            XCTAssertEqual(isComplete, expected == 10)
         }
+
+        let result = try XCTUnwrap(session.result)
+        XCTAssertEqual(result.exercise, .balance)
+        XCTAssertEqual(result.prescribedDose, 10)
+        XCTAssertEqual(result.completedDose, 10)
+        XCTAssertTrue(result.trackingNote.contains("Measured"))
     }
 
-    func testBalanceCompletesOnlyPrescribedHeldCorrections() {
-        var session = BalanceSession(correctionsPerDirection: 1, requiredHoldSeconds: 0.8, shuffle: false)
-        XCTAssertFalse(session.registerCentreHold(seconds: 0.7, isTracked: true))
-        XCTAssertEqual(session.completedCorrections, 0)
-        for index in 0..<4 {
-            let finished = session.registerCentreHold(seconds: 0.8, isTracked: true)
-            XCTAssertEqual(finished, index == 3)
-        }
-        XCTAssertTrue(session.isComplete)
+    // Break caught: button-driven Demo Mode ball drops can be reported as live
+    // measured physics outcomes.
+    func testBalanceDemoCompletionLabelsThePayloadSimulated() throws {
+        var session = BalanceSession(
+            affectedHand: .right,
+            goal: 1,
+            seed: 17,
+            isSimulated: true
+        )
+        let frame = calibratedFrame(hand: .right)
+        calibrateBalance(&session)
+        _ = session.process(frame: frame, ballPosition: session.currentTarget.position, ballEscaped: false)
+
+        let result = try XCTUnwrap(session.result)
+        XCTAssertTrue(result.trackingNote.contains("Simulated"))
+        XCTAssertFalse(result.trackingNote.contains("Measured"))
     }
 
     func testExerciseSessionsDoNotProgressWhileTrackingIsLost() {
-        var balance = BalanceSession(correctionsPerDirection: 1, requiredHoldSeconds: 0.8, shuffle: false)
-        XCTAssertFalse(balance.registerCentreHold(seconds: 2, isTracked: false))
-        XCTAssertEqual(balance.completedCorrections, 0)
-
         var squeeze = SqueezeSession(repetitions: 1, closeThreshold: 0.7, reopenThreshold: 0.3, holdSeconds: 0.5)
         XCTAssertFalse(squeeze.update(closure: 0.8, at: 0, isTracked: false))
         XCTAssertEqual(squeeze.completedRepetitions, 0)
@@ -58,5 +1294,294 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertFalse(session.update(closure: 0.8, at: 0.6, isTracked: true))
         XCTAssertTrue(session.update(closure: 0.2, at: 0.7, isTracked: true))
         XCTAssertTrue(session.isComplete)
+    }
+
+    // Break caught: the non-prescribed hand can authorize the grasp and drive a prescribed repetition.
+    func testSqueezeUsesOnlyTheAffectedHandAndShowsFaceAfterStableGraspGate() {
+        var session = SqueezeSession(
+            affectedHand: .right,
+            goal: 1,
+            closeThreshold: 0.7,
+            reopenThreshold: 0.3,
+            holdSeconds: 0.5
+        )
+        let metrics = squeezeMetrics()
+
+        XCTAssertEqual(session.process(sample: .init(hand: .left, timestamp: 0, metrics: metrics)), .waitingForGrasp)
+        XCTAssertEqual(session.process(sample: .init(hand: .left, timestamp: 1, metrics: metrics)), .waitingForGrasp)
+        XCTAssertNil(session.facePose)
+
+        XCTAssertEqual(session.process(sample: .init(hand: .right, timestamp: 2, metrics: metrics)), .stabilizingGrasp)
+        for step in 1..<10 {
+            XCTAssertEqual(
+                session.process(sample: .init(
+                    hand: .right,
+                    timestamp: 2 + Double(step) * 0.1,
+                    metrics: metrics
+                )),
+                .stabilizingGrasp
+            )
+        }
+        guard case .active = session.process(sample: .init(hand: .right, timestamp: 3, metrics: metrics)) else {
+            return XCTFail("Expected accepted grasp to activate squeeze")
+        }
+        XCTAssertNotNil(session.facePose)
+        XCTAssertEqual(session.statusLabel, "Grasp pose detected (not object verified)")
+    }
+
+    // Break caught: repeatedly adding 0.1 can leave the final Demo Mode grasp sample just short
+    // of the required one-second stability duration, forcing an extra button press.
+    func testSqueezeDemoGraspSamplingCrossesOneSecondInOneAction() throws {
+        var session = SqueezeSession(
+            affectedHand: .right,
+            goal: 1,
+            closeThreshold: 0.7,
+            reopenThreshold: 0.3,
+            holdSeconds: 0.5,
+            isSimulated: true
+        )
+        let timestamps = SqueezeDemoSampling.graspTimestamps(startingAt: 4)
+
+        XCTAssertEqual(timestamps.count, 11)
+        XCTAssertEqual(try XCTUnwrap(timestamps.last) - XCTUnwrap(timestamps.first), 1, accuracy: 0.000_000_1)
+        for timestamp in timestamps.dropLast() {
+            XCTAssertEqual(
+                session.process(sample: squeezeSample(at: timestamp, closure: 0)),
+                .stabilizingGrasp
+            )
+        }
+        guard case .active = session.process(
+            sample: squeezeSample(at: try XCTUnwrap(timestamps.last), closure: 0)
+        ) else {
+            return XCTFail("Expected one demo action to accept the grasp baseline")
+        }
+        let facePose = try XCTUnwrap(session.facePose)
+        let presentation = SqueezeHUDPresentation(
+            statusLabel: session.statusLabel,
+            graspDetected: true,
+            isDemo: true
+        )
+
+        XCTAssertNil(facePose.surfacePosition(toward: nil))
+        XCTAssertEqual(
+            presentation.graspDisclosure,
+            "Grasp pose detected (not object verified)"
+        )
+        XCTAssertEqual(
+            presentation.demoActionTitle,
+            "Complete close–hold–reopen (Demo Mode)"
+        )
+        XCTAssertEqual(
+            session.process(sample: squeezeSample(at: 5.1, closure: 1)),
+            .active(closure: 1, phase: .closing)
+        )
+    }
+
+    // Break caught: threshold crossing can skip hold/reopen phases, double-count, or continue past the exact goal.
+    func testSqueezeCountsCloseHoldReopenPhasesAndStopsAtExactGoal() throws {
+        var session = SqueezeSession(
+            affectedHand: .right,
+            goal: 1,
+            closeThreshold: 0.7,
+            reopenThreshold: 0.3,
+            holdSeconds: 0.5
+        )
+        acceptSqueezeBaseline(in: &session, startingAt: 0)
+
+        XCTAssertEqual(session.process(sample: squeezeSample(at: 1.1, closure: 1)), .active(closure: 1, phase: .closing))
+        XCTAssertEqual(session.process(sample: squeezeSample(at: 1.7, closure: 1)), .active(closure: 1, phase: .held))
+        XCTAssertEqual(session.process(sample: squeezeSample(at: 1.8, closure: 0.5)), .active(closure: 0.5, phase: .reopening))
+        XCTAssertEqual(
+            session.process(sample: squeezeSample(at: 1.9, closure: 0)),
+            .repCompleted(completed: 1, goal: 1, isComplete: true)
+        )
+        XCTAssertEqual(session.progress, SessionProgress(completed: 1, goal: 1, partial: 0))
+        XCTAssertTrue(session.isComplete)
+        XCTAssertEqual(session.process(sample: squeezeSample(at: 2, closure: 1)), .complete)
+        XCTAssertEqual(session.completedRepetitions, 1)
+
+        let result = try XCTUnwrap(session.result)
+        XCTAssertEqual(result.exercise, .squeeze)
+        XCTAssertEqual(result.prescribedDose, 1)
+        XCTAssertEqual(result.completedDose, 1)
+        XCTAssertTrue(result.trackingNote.contains("Measured"))
+        XCTAssertTrue(result.trackingNote.contains("not object verified"))
+    }
+
+    // Break caught: losing required joints can leave the face floating or resume a half-finished repetition.
+    func testSqueezeInterruptionHidesFaceDiscardsPartialRepAndPreservesCompletedReps() {
+        var session = SqueezeSession(
+            affectedHand: .right,
+            goal: 2,
+            closeThreshold: 0.7,
+            reopenThreshold: 0.3,
+            holdSeconds: 0.5
+        )
+        acceptSqueezeBaseline(in: &session, startingAt: 0)
+        _ = session.process(sample: squeezeSample(at: 1.1, closure: 1))
+        _ = session.process(sample: squeezeSample(at: 1.7, closure: 1))
+        _ = session.process(sample: squeezeSample(at: 1.8, closure: 0.5))
+        _ = session.process(sample: squeezeSample(at: 1.9, closure: 0))
+        XCTAssertEqual(session.completedRepetitions, 1)
+
+        _ = session.process(sample: squeezeSample(at: 2, closure: 1))
+        XCTAssertEqual(session.process(frame: nil), .paused)
+        XCTAssertNil(session.facePose)
+        XCTAssertEqual(session.phase, .open)
+        XCTAssertEqual(session.completedRepetitions, 1)
+
+        XCTAssertEqual(session.process(sample: squeezeSample(at: 2.2, closure: 0)), .active(closure: 0, phase: .open))
+        session.pause(requiresRecalibration: true)
+        XCTAssertEqual(session.process(sample: squeezeSample(at: 4.3, closure: 0)), .stabilizingGrasp)
+        XCTAssertNil(session.facePose)
+        XCTAssertEqual(session.completedRepetitions, 1)
+    }
+
+    // Mutation caught: treating an incomplete metrics frame as global pause
+    // leaves the inferred face visible or resumes a half-finished close.
+    func testSqueezeMeasurementUnavailableClearsOnlyLocalAttempt() {
+        var session = SqueezeSession(repetitions: 2, closeThreshold: 0.7, reopenThreshold: 0.3, holdSeconds: 0.5)
+        acceptSqueezeBaseline(in: &session, startingAt: 0)
+        _ = session.process(sample: squeezeSample(at: 1.1, closure: 1))
+
+        XCTAssertEqual(session.measurementUnavailable(), .waitingForGrasp)
+        XCTAssertNil(session.facePose)
+        XCTAssertEqual(session.phase, .open)
+        XCTAssertEqual(session.completedRepetitions, 0)
+        XCTAssertTrue(session.isCalibrated)
+    }
+
+    // Break caught: synthetic button-driven repetitions can claim to be measured joint-tracking outcomes.
+    func testSqueezeDemoCompletionLabelsThePayloadSimulated() throws {
+        var session = SqueezeSession(
+            affectedHand: .right,
+            goal: 1,
+            closeThreshold: 0.7,
+            reopenThreshold: 0.3,
+            holdSeconds: 0.5,
+            isSimulated: true
+        )
+        acceptSqueezeBaseline(in: &session, startingAt: 0)
+        _ = session.process(sample: squeezeSample(at: 1.1, closure: 1))
+        _ = session.process(sample: squeezeSample(at: 1.7, closure: 1))
+        _ = session.process(sample: squeezeSample(at: 1.8, closure: 0.5))
+        _ = session.process(sample: squeezeSample(at: 1.9, closure: 0))
+
+        let result = try XCTUnwrap(session.result)
+        XCTAssertTrue(result.trackingNote.contains("Simulated"))
+        XCTAssertFalse(result.trackingNote.contains("Measured"))
+    }
+
+    // Mutation caught: a fallback button that only calibrates on its first
+    // activation does not advance exactly one requested repetition.
+    func testSqueezeAssistedActionAdvancesExactlyOneRepThroughSession() {
+        var session = SqueezeSession(repetitions: 2, closeThreshold: 0.7, reopenThreshold: 0.3, holdSeconds: 0.5)
+        var timestamp: TimeInterval = 10
+        XCTAssertTrue(SqueezeAssistedProgressAction.process(session: &session, nextTimestamp: &timestamp))
+        XCTAssertEqual(session.completedRepetitions, 1)
+        XCTAssertTrue(SqueezeAssistedProgressAction.process(session: &session, nextTimestamp: &timestamp))
+        XCTAssertEqual(session.completedRepetitions, 2)
+        XCTAssertFalse(SqueezeAssistedProgressAction.process(session: &session, nextTimestamp: &timestamp))
+    }
+
+    func testSqueezeAssistedActionSeedsAfterLatestLiveTimestamp() {
+        var session = SqueezeSession(repetitions: 2, closeThreshold: 0.7, reopenThreshold: 0.3, holdSeconds: 0.5)
+        acceptSqueezeBaseline(in: &session, startingAt: 5_000)
+        var clock: TimeInterval = 0
+        XCTAssertTrue(SqueezeAssistedProgressAction.process(session: &session, nextTimestamp: &clock))
+        XCTAssertEqual(session.completedRepetitions, 1)
+        XCTAssertGreaterThan(clock, 5_000)
+    }
+
+    func testSqueezeHUDShowsSimulatedOnlyForDemoProvenance() {
+        XCTAssertNil(SqueezeHUDPresentation(statusLabel: nil, graspDetected: false, isDemo: false).provenanceLabel)
+        XCTAssertEqual(
+            SqueezeHUDPresentation(statusLabel: nil, graspDetected: false, isDemo: true).provenanceLabel,
+            "SIMULATED"
+        )
+    }
+
+    private func acceptSqueezeBaseline(in session: inout SqueezeSession, startingAt timestamp: TimeInterval) {
+        for step in 0..<10 {
+            XCTAssertEqual(
+                session.process(sample: squeezeSample(
+                    at: timestamp + Double(step) * 0.1,
+                    closure: 0
+                )),
+                .stabilizingGrasp
+            )
+        }
+        guard case .active = session.process(sample: squeezeSample(at: timestamp + 1, closure: 0)) else {
+            return XCTFail("Expected stable grasp baseline")
+        }
+    }
+
+    private func squeezeSample(at timestamp: TimeInterval, closure: Float) -> SqueezeHandSample {
+        .init(
+            hand: .right,
+            timestamp: timestamp,
+            metrics: squeezeMetrics(closure: closure)
+        )
+    }
+
+    private func squeezeMetrics(closure: Float = 0) -> SqueezeHandMetrics {
+        SqueezeHandMetrics(
+            ballCenter: SIMD3<Float>(0, 0.05, -0.45),
+            radius: 0.04,
+            meanTipToPalmDistance: 0.08 * (1 - 0.5 * closure),
+            meanFingerFlexion: 0.3 + (.pi / 2) * closure
+        )
+    }
+
+    private func calibratedFrame(
+        hand: AffectedHand,
+        timestamp: TimeInterval = 1,
+        wrist: simd_float4x4 = matrix_identity_float4x4,
+        omit omittedJoint: HandJoint? = nil,
+        raisedKnuckle: HandJoint? = nil
+    ) -> HandJointFrame {
+        let knuckles: [(HandJoint, Float)] = [
+            (.indexFingerKnuckle, -0.03),
+            (.middleFingerKnuckle, -0.01),
+            (.ringFingerKnuckle, 0.01),
+            (.littleFingerKnuckle, 0.03)
+        ]
+        var joints: [HandJoint: HandJointSample] = [.wrist: .tracked(transform: wrist)]
+        for (joint, x) in knuckles where joint != omittedJoint {
+            let y: Float = joint == raisedKnuckle ? 0.02 : 0
+            joints[joint] = .tracked(transform: simd_float4x4(translation: SIMD3<Float>(x, y, 0)))
+        }
+        if omittedJoint == .wrist { joints[.wrist] = nil }
+        return .synthetic(hand: hand, timestamp: timestamp, joints: joints)
+    }
+
+    private func advanceBalanceCalibration(
+        _ session: inout BalanceSession,
+        through lastTimestamp: Int,
+        wrist: simd_float4x4 = matrix_identity_float4x4
+    ) {
+        for timestamp in 0...lastTimestamp {
+            _ = session.process(
+                frame: calibratedFrame(
+                    hand: .right,
+                    timestamp: Double(timestamp),
+                    wrist: wrist
+                ),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            )
+        }
+    }
+
+    private func calibrateBalance(
+        _ session: inout BalanceSession,
+        wrist: simd_float4x4 = matrix_identity_float4x4
+    ) {
+        advanceBalanceCalibration(&session, through: 24, wrist: wrist)
+        XCTAssertTrue(session.isCalibrated)
+    }
+
+    private func request(for experience: RehabExperience) -> RehabSessionRequest {
+        RehabSessionRequest(experience: experience, prescription: .demo)
     }
 }

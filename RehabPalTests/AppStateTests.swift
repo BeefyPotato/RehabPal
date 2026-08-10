@@ -18,8 +18,14 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    func testBothExerciseOrdersUnlockAssessmentOnlyAfterSecondCompletion() {
-        for order in [[ExerciseKind.balance, .squeeze], [.squeeze, .balance]] {
+    // Break caught: a new prescribed exercise could be omitted from the daily
+    // completion gate, unlocking assessment before its prescribed dose is done.
+    func testAssessmentUnlocksOnlyAfterEveryPrescribedExerciseCompletes() {
+        let exerciseOrders: [[ExerciseKind]] = [
+            [.balance, .squeeze, .sheepDrop],
+            [.sheepDrop, .balance, .squeeze]
+        ]
+        for order in exerciseOrders {
             let state = unlockedRoutine()
 
             XCTAssertTrue(state.completeExercise(order[0], result: .fixture(for: order[0])))
@@ -27,6 +33,10 @@ final class AppStateTests: XCTestCase {
             XCTAssertEqual(state.stage, .routine)
 
             XCTAssertTrue(state.completeExercise(order[1], result: .fixture(for: order[1])))
+            XCTAssertFalse(state.canStartAssessment)
+            XCTAssertEqual(state.stage, .routine)
+
+            XCTAssertTrue(state.completeExercise(order[2], result: .fixture(for: order[2])))
             XCTAssertTrue(state.canStartAssessment)
             XCTAssertEqual(state.stage, .wristAssessment)
         }
@@ -43,6 +53,7 @@ final class AppStateTests: XCTestCase {
 
         XCTAssertTrue(state.completeExercise(.balance, result: .fixture(for: .balance)))
         XCTAssertTrue(state.completeExercise(.squeeze, result: .fixture(for: .squeeze)))
+        XCTAssertTrue(state.completeExercise(.sheepDrop, result: .fixture(for: .sheepDrop)))
         XCTAssertTrue(state.completeWristAssessment(AssessmentResult.fixture.wrist))
         XCTAssertEqual(state.stage, .handAssessment)
         XCTAssertTrue(state.completeHandROMAssessment(AssessmentResult.fixture.handROM))
@@ -66,14 +77,96 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(state.canStartAssessment)
     }
 
+    // Break caught: any result with the right exercise enum could unlock the
+    // daily gate even when it did not complete the prescribed dose.
+    @MainActor
+    func testDailyGateAcceptsOnlyTheExactPrescriptionDose() {
+        let state = unlockedRoutine()
+        let incomplete = GameplayResult(
+            exercise: .balance,
+            prescribedDose: state.prescription.balanceTargetCount,
+            completedDose: state.prescription.balanceTargetCount - 1,
+            trackingNote: "Measured incomplete attempt"
+        )
+        let wrongGoal = GameplayResult(
+            exercise: .balance,
+            prescribedDose: state.prescription.balanceTargetCount - 1,
+            completedDose: state.prescription.balanceTargetCount - 1,
+            trackingNote: "Measured against the wrong goal"
+        )
+
+        XCTAssertFalse(state.completeExercise(.balance, result: incomplete))
+        XCTAssertFalse(state.completeExercise(.balance, result: wrongGoal))
+        XCTAssertTrue(state.completedExercises.isEmpty)
+        XCTAssertFalse(state.canStartAssessment)
+    }
+
     @MainActor
     func testHandAssessmentCannotFinishWithMissingDigits() {
         let state = unlockedRoutine()
         XCTAssertTrue(state.completeExercise(.balance, result: .fixture(for: .balance)))
         XCTAssertTrue(state.completeExercise(.squeeze, result: .fixture(for: .squeeze)))
+        XCTAssertTrue(state.completeExercise(.sheepDrop, result: .fixture(for: .sheepDrop)))
         XCTAssertTrue(state.completeWristAssessment(AssessmentResult.fixture.wrist))
         XCTAssertFalse(state.completeHandROMAssessment([.index: AssessmentResult.fixture.handROM[.index]!]))
         XCTAssertEqual(state.stage, .handAssessment)
+    }
+
+    @MainActor
+    func testDiagnosticCancelReturnsToRoutineAndRelaunchesThePendingAssessment() {
+        let state = unlockedRoutine()
+        XCTAssertTrue(state.completeExercise(.balance, result: .fixture(for: .balance)))
+        XCTAssertTrue(state.completeExercise(.squeeze, result: .fixture(for: .squeeze)))
+        XCTAssertTrue(state.completeExercise(.sheepDrop, result: .fixture(for: .sheepDrop)))
+        XCTAssertEqual(state.stage, .wristAssessment)
+
+        let wristRequest = RehabSessionRequest(
+            experience: .wristAssessment,
+            prescription: state.prescription
+        )
+        XCTAssertTrue(state.activateSession(wristRequest, provenance: .live))
+        XCTAssertTrue(state.cancelSessionAndReturnToRoutine())
+        XCTAssertEqual(state.stage, .routine)
+        XCTAssertNil(state.activeSession)
+        XCTAssertTrue(state.startAssessment())
+        XCTAssertEqual(state.stage, .wristAssessment)
+
+        XCTAssertTrue(state.completeWristAssessment(AssessmentResult.fixture.wrist))
+        let handRequest = RehabSessionRequest(
+            experience: .handAssessment,
+            prescription: state.prescription
+        )
+        XCTAssertTrue(state.activateSession(handRequest, provenance: .demo))
+        XCTAssertTrue(state.cancelSessionAndReturnToRoutine())
+        XCTAssertEqual(state.stage, .routine)
+        XCTAssertNil(state.activeSession)
+        XCTAssertTrue(state.startAssessment())
+        XCTAssertEqual(state.stage, .handAssessment)
+    }
+
+    @MainActor
+    func testActivateSessionRejectsMalformedWristAndFingerDiagnosticGoals() {
+        let state = unlockedRoutine()
+        XCTAssertTrue(state.completeExercise(.balance, result: .fixture(for: .balance)))
+        XCTAssertTrue(state.completeExercise(.squeeze, result: .fixture(for: .squeeze)))
+        XCTAssertTrue(state.completeExercise(.sheepDrop, result: .fixture(for: .sheepDrop)))
+
+        let malformedWrist = RehabSessionRequest(
+            experience: .wristAssessment,
+            affectedHand: state.prescription.affectedHand,
+            goal: 6
+        )
+        XCTAssertFalse(state.activateSession(malformedWrist, provenance: .live))
+        XCTAssertNil(state.activeSession)
+
+        XCTAssertTrue(state.completeWristAssessment(AssessmentResult.fixture.wrist))
+        let malformedHand = RehabSessionRequest(
+            experience: .handAssessment,
+            affectedHand: state.prescription.affectedHand,
+            goal: 9
+        )
+        XCTAssertFalse(state.activateSession(malformedHand, provenance: .demo))
+        XCTAssertNil(state.activeSession)
     }
 
     @MainActor
@@ -127,6 +220,7 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(state.answerMedication(taken: true))
         XCTAssertTrue(state.completeExercise(.balance, result: .fixture(for: .balance)))
         XCTAssertTrue(state.completeExercise(.squeeze, result: .fixture(for: .squeeze)))
+        XCTAssertTrue(state.completeExercise(.sheepDrop, result: .fixture(for: .sheepDrop)))
         XCTAssertTrue(state.completeWristAssessment(AssessmentResult.fixture.wrist))
         XCTAssertTrue(state.completeHandROMAssessment(AssessmentResult.fixture.handROM))
         XCTAssertTrue(state.submitSymptoms(.comfortable))

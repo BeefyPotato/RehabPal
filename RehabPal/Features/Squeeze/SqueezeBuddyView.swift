@@ -1,65 +1,315 @@
 import RealityKit
 import SwiftUI
 
+private final class SqueezeSubscriptionHolder {
+    var update: EventSubscription?
+}
+
+struct SqueezeHUDPresentation: Equatable {
+    let statusLabel: String?
+    let graspDetected: Bool
+    let isDemo: Bool
+
+    var graspDisclosure: String? {
+        graspDetected ? statusLabel : nil
+    }
+
+    var demoActionTitle: String {
+        graspDetected
+            ? "Complete close–hold–reopen (Demo Mode)"
+            : "Detect grasp (Demo Mode)"
+    }
+    var provenanceLabel: String? { isDemo ? "SIMULATED" : nil }
+}
+
+/// An inferred overlay for the user's physical stress ball. The scene contains
+/// facial features only; it intentionally never renders a virtual ball mesh.
 struct SqueezeBuddyView: View {
-    let closure: Float
-    let phase: SqueezeRepDetector.Phase
-    let completedRepetitions: Int
-    let prescribedRepetitions: Int
-    let trackingVisible: Bool
+    let coordinator: RehabSessionCoordinator
+    let onProgress: (SessionProgress) -> Void
+    let onComplete: (GameplayResult) -> Void
+
+    @State private var game: SqueezeSession
+    @State private var faceRoot = Entity()
+    @State private var leftEye = ModelEntity()
+    @State private var rightEye = ModelEntity()
+    @State private var mouth = ModelEntity()
+    @State private var subscriptions = SqueezeSubscriptionHolder()
+    @State private var demoTimestamp: TimeInterval = 0
+    @State private var recalibrationGeneration: Int?
+
+    init(
+        request: RehabSessionRequest,
+        coordinator: RehabSessionCoordinator,
+        closeThreshold: Float,
+        reopenThreshold: Float,
+        holdSeconds: TimeInterval,
+        onProgress: @escaping (SessionProgress) -> Void,
+        onComplete: @escaping (GameplayResult) -> Void
+    ) {
+        self.coordinator = coordinator
+        self.onProgress = onProgress
+        self.onComplete = onComplete
+        _game = State(initialValue: SqueezeSession(
+            affectedHand: request.affectedHand,
+            goal: request.goal,
+            closeThreshold: closeThreshold,
+            reopenThreshold: reopenThreshold,
+            holdSeconds: holdSeconds,
+            isSimulated: coordinator.isUsingDemoMode
+        ))
+    }
 
     var body: some View {
-        VStack(spacing: 18) {
-            RealityView { content in
-                let root = Entity()
-                let buddy = ModelEntity(
-                    mesh: .generateSphere(radius: 0.11),
-                    materials: [SimpleMaterial(color: .systemOrange, isMetallic: false)]
+        RealityView { content, attachments in
+            let root = Entity()
+            root.name = "SqueezeOverlayRoot"
+            buildFace()
+            root.addChild(faceRoot)
+            faceRoot.isEnabled = false
+
+            if let hud = attachments.entity(for: "squeeze-hud") {
+                hud.position = [0, 1.15, -0.8]
+                root.addChild(hud)
+            }
+            content.add(root)
+            subscriptions.update = content.subscribe(to: SceneEvents.Update.self) { _ in
+                gameStep()
+            }
+        } update: { content, attachments in
+            if let hud = attachments.entity(for: "squeeze-hud"),
+               hud.parent == nil,
+               let root = content.entities.first {
+                hud.position = [0, 1.15, -0.8]
+                root.addChild(hud)
+            }
+            updateFace()
+        } attachments: {
+            Attachment(id: "squeeze-hud") {
+                let recovery = ImmersiveRecoveryPresentation.make(
+                    phase: coordinator.phase,
+                    canConfirmRecalibration: coordinator.canConfirmRecalibration
                 )
-                buddy.name = "primitive-squeeze-buddy"
-                let eyeMaterial = SimpleMaterial(color: .black, isMetallic: false)
-                for x: Float in [-0.035, 0.035] {
-                    let eye = ModelEntity(mesh: .generateSphere(radius: 0.012), materials: [eyeMaterial])
-                    eye.position = [x, 0.025, 0.102]
-                    root.addChild(eye)
+                ImmersiveRecoveryStack(
+                    presentation: recovery,
+                    onRecalibrate: { _ = coordinator.confirmRecalibration() },
+                    onBackToRoutine: coordinator.requestReturnToRoutine
+                ) {
+                    SqueezeHUD(
+                        progress: game.progress,
+                        phase: game.phase,
+                        presentation: SqueezeHUDPresentation(
+                            statusLabel: game.statusLabel,
+                            graspDetected: game.facePose != nil,
+                            isDemo: coordinator.isUsingDemoMode
+                        ),
+                        isRecovering: recovery != nil,
+                        isDemo: coordinator.isUsingDemoMode,
+                        assistedActionEnabled: AssistedProgressControl.isAuthorized(
+                            coordinator.phase,
+                            for: .exercise(.squeeze)
+                        ),
+                        onAssistedStep: performAssistedStep
+                    )
                 }
-                root.addChild(buddy)
-                content.add(root)
-            } update: { content in
-                guard let buddy = content.entities.first?.findEntity(named: "primitive-squeeze-buddy") else { return }
-                let squish = max(0.7, 1 - closure * 0.25)
-                buddy.scale = [1 + closure * 0.15, squish, 1 + closure * 0.15]
             }
-            .frame(height: 280)
-
-            HStack(spacing: 8) {
-                phaseStep("Close", active: phase == .closing)
-                Image(systemName: "chevron.right")
-                phaseStep("Hold", active: phase == .closing && closure > 0.7)
-                Image(systemName: "chevron.right")
-                phaseStep("Open", active: phase == .reopening)
-            }
-
-            Text(trackingVisible ? cue : "Hands temporarily not visible")
-                .font(.title2.weight(.semibold))
-            ProgressView(value: Double(completedRepetitions), total: Double(prescribedRepetitions))
-                .frame(maxWidth: 360)
-            Text("Vision tracking observes closing and release—not grip force.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
         }
+    }
+
+    private func gameStep() {
+        coordinator.updateRequiredJoints(SqueezeHandMetrics.requiredJoints)
+        if processRecalibrationIfNeeded() {
+            return
+        }
+        guard case let .active(request, _, _) = coordinator.phase,
+              request.experience == .exercise(.squeeze) else {
+            let requiresRecalibration: Bool
+            if case .trackingLost(requiresRecalibration: true) = coordinator.pauseReason {
+                requiresRecalibration = true
+            } else {
+                requiresRecalibration = false
+            }
+            game.pause(requiresRecalibration: requiresRecalibration)
+            updateFace()
+            return
+        }
+        guard !coordinator.isUsingDemoMode else { return }
+        handle(game.process(frame: coordinator.currentFrame))
+    }
+
+    private func processRecalibrationIfNeeded() -> Bool {
+        if let generation = coordinator.pendingProcessorResetGeneration,
+           recalibrationGeneration != generation {
+            game.pause(requiresRecalibration: true)
+            recalibrationGeneration = generation
+            faceRoot.isEnabled = false
+            _ = coordinator.acknowledgeProcessorReset(generation)
+        }
+
+        guard let generation = recalibrationGeneration else { return false }
+        guard case .trackingLost(requiresRecalibration: true) = coordinator.pauseReason else {
+            recalibrationGeneration = nil
+            return false
+        }
+        guard !game.isCalibrated, let frame = coordinator.currentFrame else {
+            faceRoot.isEnabled = false
+            if let frame = coordinator.currentFrame, game.isCalibrated {
+                _ = coordinator.acknowledgeProcessorCalibration(
+                    generation: generation,
+                    frameTimestamp: frame.timestamp
+                )
+            }
+            return true
+        }
+
+        _ = game.process(frame: frame)
+        faceRoot.isEnabled = false
+        if game.isCalibrated {
+            _ = coordinator.acknowledgeProcessorCalibration(
+                generation: generation,
+                frameTimestamp: frame.timestamp
+            )
+        }
+        return true
+    }
+
+    private func handle(_ event: SqueezeEvent) {
+        updateFace()
+        switch event {
+        case .active:
+            onProgress(game.progress)
+        case let .repCompleted(_, _, isComplete):
+            onProgress(game.progress)
+            if isComplete, let result = game.result {
+                onComplete(result)
+            }
+        case .waitingForGrasp, .stabilizingGrasp, .paused, .complete:
+            break
+        }
+    }
+
+    private func buildFace() {
+        faceRoot.name = "inferred-real-ball-face"
+        let dark = SimpleMaterial(color: .black, isMetallic: false)
+        leftEye = ModelEntity(mesh: .generateSphere(radius: 0.006), materials: [dark])
+        rightEye = ModelEntity(mesh: .generateSphere(radius: 0.006), materials: [dark])
+        mouth = ModelEntity(
+            mesh: .generateBox(size: SIMD3<Float>(0.026, 0.004, 0.003), cornerRadius: 0.002),
+            materials: [dark]
+        )
+        leftEye.name = "left-eye"
+        rightEye.name = "right-eye"
+        mouth.name = "mouth"
+        leftEye.position = [-0.012, 0.009, 0]
+        rightEye.position = [0.012, 0.009, 0]
+        mouth.position = [0, -0.011, 0]
+        faceRoot.addChild(leftEye)
+        faceRoot.addChild(rightEye)
+        faceRoot.addChild(mouth)
+    }
+
+    private func updateFace() {
+        guard let pose = game.facePose,
+              let viewerPosition = coordinator.currentViewerPosition,
+              let position = pose.surfacePosition(toward: viewerPosition) else {
+            faceRoot.isEnabled = false
+            return
+        }
+        faceRoot.isEnabled = true
+        faceRoot.look(at: viewerPosition, from: position, relativeTo: nil, forward: .positiveZ)
+        let expression = max(0.6, 1 - game.normalizedClosure * 0.35)
+        leftEye.scale = [1, expression, 1]
+        rightEye.scale = [1, expression, 1]
+        mouth.scale = [1 + game.normalizedClosure * 0.45, expression, 1]
+    }
+
+    private func performAssistedStep() {
+        guard AssistedProgressControl.isAuthorized(
+            coordinator.phase,
+            for: .exercise(.squeeze)
+        ) else { return }
+        let before = game.completedRepetitions
+        guard SqueezeAssistedProgressAction.process(
+            session: &game,
+            nextTimestamp: &demoTimestamp
+        ) else { return }
+        _ = coordinator.registerAssistedProgress(
+            from: before,
+            to: game.completedRepetitions
+        )
+        onProgress(game.progress)
+        if game.isComplete, let result = game.result { onComplete(result) }
+    }
+
+    private func demoSample(closure: Float, at timestamp: TimeInterval) -> SqueezeHandSample {
+        SqueezeHandSample(
+            hand: game.affectedHand,
+            timestamp: timestamp,
+            metrics: SqueezeHandMetrics(
+                ballCenter: [0, 1.05, -0.55],
+                radius: 0.04,
+                meanTipToPalmDistance: 0.08 * (1 - closure * 0.5),
+                meanFingerFlexion: 0.3 + (.pi / 2) * closure
+            )
+        )
+    }
+}
+
+private struct SqueezeHUD: View {
+    let progress: SessionProgress
+    let phase: SqueezeRepDetector.Phase
+    let presentation: SqueezeHUDPresentation
+    let isRecovering: Bool
+    let isDemo: Bool
+    let assistedActionEnabled: Bool
+    let onAssistedStep: () -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            SessionProgressLabel(progress: progress)
+            Text("Phase: \(phase.rawValue.capitalized)")
+                .font(.headline)
+            HStack(spacing: 6) {
+                phaseStep("Close", active: phase == .closing)
+                phaseStep("Hold", active: phase == .held)
+                phaseStep("Reopen", active: phase == .reopening)
+            }
+            if !isRecovering, let graspDisclosure = presentation.graspDisclosure {
+                Text(graspDisclosure)
+                    .font(.caption.bold())
+                    .foregroundStyle(.green)
+            } else if !isRecovering {
+                Text("Cup your prescribed hand around the real stress ball and hold still for 1 second")
+                    .font(.caption)
+                    .multilineTextAlignment(.center)
+            }
+            Text("Vision tracks hand motion; it does not measure grip force.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            if progress.completed < progress.goal {
+                Button("Complete Rep (Assisted)", action: onAssistedStep)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!assistedActionEnabled)
+                Text("ASSISTED — NOT TRACKED")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.orange)
+            }
+            if let provenanceLabel = presentation.provenanceLabel {
+                Text(provenanceLabel)
+                    .font(.caption2.bold())
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding(16)
+        .frame(width: 430)
+        .background(.regularMaterial, in: .rect(cornerRadius: 16))
     }
 
     private func phaseStep(_ title: String, active: Bool) -> some View {
-        Text(title).font(.headline).padding(.horizontal, 16).padding(.vertical, 8)
+        Text(title)
+            .font(.caption.bold())
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
             .background(active ? Color.orange : Color.secondary.opacity(0.18), in: Capsule())
-    }
-
-    private var cue: String {
-        switch phase {
-        case .open: "Close around the stress ball"
-        case .closing: "Hold gently"
-        case .reopening: "Open your hand"
-        }
     }
 }

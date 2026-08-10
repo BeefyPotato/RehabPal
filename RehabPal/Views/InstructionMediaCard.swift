@@ -4,6 +4,7 @@ import SwiftUI
 enum InstructionMediaKind: String {
     case balance
     case squeeze
+    case sheepDrop
     case wristAssessment
     case fingerROM
 
@@ -11,6 +12,7 @@ enum InstructionMediaKind: String {
         switch self {
         case .balance: "Tilt your wrist to guide the ball"
         case .squeeze: "Close, hold, then fully reopen"
+        case .sheepDrop: "System-pinch the sheep, drag it over the pen, then release"
         case .wristAssessment: "Move smoothly in each direction"
         case .fingerROM: "Bend and straighten one finger"
         }
@@ -31,7 +33,7 @@ struct InstructionMediaCard: View {
                 } else {
                     ZStack {
                         LinearGradient(colors: [.teal.opacity(0.35), .blue.opacity(0.18)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                        Image(systemName: kind == .squeeze || kind == .fingerROM ? "hand.raised.fingers.spread" : "hand.draw")
+                        Image(systemName: previewSystemImage)
                             .font(.system(size: 70)).foregroundStyle(.white)
                     }
                 }
@@ -48,10 +50,21 @@ struct InstructionMediaCard: View {
             let item = AVPlayerItem(url: url)
             player = AVPlayer(playerItem: item)
             player?.isMuted = true
-            NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { _ in
+            NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { _ in
                 player?.seek(to: .zero)
                 player?.play()
             }
+        }
+    }
+
+    private var previewSystemImage: String {
+        switch kind {
+        case .balance, .wristAssessment:
+            "hand.draw"
+        case .squeeze, .fingerROM:
+            "hand.raised.fingers.spread"
+        case .sheepDrop:
+            "pawprint.fill"
         }
     }
 }

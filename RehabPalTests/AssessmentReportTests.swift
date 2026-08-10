@@ -2,16 +2,58 @@ import XCTest
 @testable import RehabPal
 
 final class AssessmentReportTests: XCTestCase {
-    func testAssessmentParametersRemainFixedAndStricterThanGameplay() {
-        let prescription = Prescription.demo
-        let assessment = AssessmentProtocol(prescription: prescription)
-        let game = GameplayTolerance(prescription: prescription)
+    // Mutation caught: relying only on Demo provenance describes assisted
+    // steps in an otherwise-live session as fully hand tracked.
+    @MainActor
+    func testReportDisclosesAssistedProgressInLiveSession() {
+        let report = AfterCareReport.make(
+            history: .fixture,
+            assessment: .fixture,
+            gameplay: [.fixture(for: .squeeze)],
+            symptoms: .comfortable,
+            reviewThreshold: 6,
+            sessionProvenance: [.exercise(.squeeze): .live],
+            assistedProgressCounts: [.exercise(.squeeze): 2]
+        )
+        XCTAssertEqual(report.assistedResultLabels, ["Squeeze Buddy (2 assisted)"])
+        XCTAssertTrue(report.assistedProgressNote?.contains("NOT FULLY HAND-TRACKED") == true)
+    }
+    // Break caught: a screen or processor can silently replace a clinician-set
+    // exercise or diagnostic goal with a hard-coded demo value.
+    func testEverySessionRequestDerivesItsGoalFromPrescription() {
+        let prescription = Prescription(
+            affectedHand: .left,
+            balanceTargetCount: 7,
+            squeezeRepetitions: 9,
+            squeezeCloseThreshold: 0.75,
+            squeezeReopenThreshold: 0.25,
+            squeezeHoldSeconds: 0.6,
+            wristDiagnostic: WristDiagnosticPrescription(
+                attemptsPerDirection: 3,
+                targetDegrees: 18,
+                targetToleranceDegrees: 4,
+                offAxisToleranceDegrees: 3,
+                holdSeconds: 0.4,
+                neutralReturnToleranceDegrees: 4
+            ),
+            fingerDiagnostic: FingerDiagnosticPrescription(
+                attemptsPerDigit: 4,
+                extensionStabilitySeconds: 0.25,
+                extensionStabilityToleranceDegrees: 2,
+                minimumTotalExcursionDegrees: 16,
+                extensionReturnToleranceDegrees: 7,
+                thumbOppositionReduction: 0.3,
+                thumbOppositionReturnTolerance: 0.08
+            ),
+            symptomReviewThreshold: 6
+        )
 
-        XCTAssertEqual(assessment.wristAttemptsPerDirection, 2)
-        XCTAssertEqual(assessment.squeezeRepetitions, 5)
-        XCTAssertLessThan(assessment.wristTolerance, game.wristTolerance)
-        XCTAssertFalse(assessment.isAdaptive)
-        XCTAssertTrue(game.isAdaptive)
+        XCTAssertEqual(prescription.sessionRequest(for: .exercise(.balance)).goal, 7)
+        XCTAssertEqual(prescription.sessionRequest(for: .exercise(.squeeze)).goal, 9)
+        XCTAssertEqual(prescription.sessionRequest(for: .wristAssessment).goal, 15)
+        XCTAssertEqual(prescription.sessionRequest(for: .handAssessment).goal, 20)
+        XCTAssertEqual(prescription.wristDiagnostic.targetToleranceDegrees, 4)
+        XCTAssertEqual(prescription.fingerDiagnostic.extensionReturnToleranceDegrees, 7)
     }
 
     func testFollowUpFlagUsesClinicianThresholdAndReportedIncrease() {
@@ -33,13 +75,15 @@ final class AssessmentReportTests: XCTestCase {
         )))
     }
 
+    @MainActor
     func testReportKeepsAssessmentGameplayAndReportedMetricsSeparate() {
         let report = AfterCareReport.make(
             history: .fixture,
             assessment: .fixture,
             gameplay: [.fixture(for: .balance), .fixture(for: .squeeze)],
             symptoms: .comfortable,
-            reviewThreshold: 6
+            reviewThreshold: 6,
+            sessionProvenance: [:]
         )
 
         XCTAssertEqual(report.assessment.currentWristControl, 73)
@@ -48,6 +92,7 @@ final class AssessmentReportTests: XCTestCase {
         XCTAssertFalse(report.patientReported.reviewWithPhysiotherapist)
     }
 
+    @MainActor
     func testLowConfidenceAssessmentIsLabeledUnavailableInsteadOfFabricated() {
         let lowConfidence = AssessmentResult(
             wristControlScore: 99,
@@ -59,12 +104,134 @@ final class AssessmentReportTests: XCTestCase {
             assessment: lowConfidence,
             gameplay: [.fixture(for: .balance), .fixture(for: .squeeze)],
             symptoms: .comfortable,
-            reviewThreshold: 6
+            reviewThreshold: 6,
+            sessionProvenance: [:]
         )
 
         XCTAssertNil(report.assessment.currentWristControl)
         XCTAssertNil(report.assessment.currentClosureConsistency)
         XCTAssertEqual(report.assessment.trackingNote, "Low tracking confidence—comparison unavailable")
+    }
+
+    // Break caught: averaging wrist and finger confidence can hide a confident
+    // wrist because unrelated fingers are weak, or expose unavailable fingers
+    // because the wrist is strong.
+    @MainActor
+    func testReportGatesWristAndEachFingerByTheirOwnConfidence() {
+        let availableIndex = DigitROMSummary(
+            digit: .index,
+            totalExcursion: 84,
+            maximumFlexion: 75,
+            maximumExtension: 5,
+            consistency: 88,
+            trackingConfidence: 0.9,
+            attemptCount: 2
+        )
+        let unavailableRing = DigitROMSummary(
+            digit: .ring,
+            totalExcursion: 120,
+            maximumFlexion: 100,
+            maximumExtension: 0,
+            consistency: 99,
+            trackingConfidence: 0.3,
+            attemptCount: 2
+        )
+        let assessment = AssessmentResult(
+            wrist: .init(controlScore: 91, trackingConfidence: 0.95),
+            handROM: [.index: availableIndex, .ring: unavailableRing]
+        )
+
+        let report = AfterCareReport.make(
+            history: .fixture,
+            assessment: assessment,
+            gameplay: [],
+            symptoms: .comfortable,
+            reviewThreshold: 6,
+            sessionProvenance: [:]
+        )
+
+        XCTAssertEqual(report.assessment.currentWristControl, 91)
+        XCTAssertEqual(report.assessment.currentClosureConsistency, 88)
+        XCTAssertEqual(assessment.todayTrendValue(for: .wrist), 91)
+        XCTAssertEqual(assessment.todayTrendValue(for: .finger(.index)), 84)
+        XCTAssertNil(assessment.todayTrendValue(for: .finger(.ring)))
+    }
+
+    // Break caught: strong fingers can make a low-confidence wrist appear as
+    // today's orange chart point even though the wrist result is unavailable.
+    @MainActor
+    func testReportOmitsUnavailableWristTodayPointWithoutHidingAvailableFinger() {
+        let availableMiddle = DigitROMSummary(
+            digit: .middle,
+            totalExcursion: 78,
+            maximumFlexion: 70,
+            maximumExtension: 4,
+            consistency: 82,
+            trackingConfidence: 0.85,
+            attemptCount: 2
+        )
+        let assessment = AssessmentResult(
+            wrist: .init(controlScore: 99, trackingConfidence: 0.2),
+            handROM: [.middle: availableMiddle]
+        )
+
+        let report = AfterCareReport.make(
+            history: .fixture,
+            assessment: assessment,
+            gameplay: [],
+            symptoms: .comfortable,
+            reviewThreshold: 6,
+            sessionProvenance: [:]
+        )
+
+        XCTAssertNil(report.assessment.currentWristControl)
+        XCTAssertEqual(report.assessment.currentClosureConsistency, 82)
+        XCTAssertNil(assessment.todayTrendValue(for: .wrist))
+        XCTAssertEqual(assessment.todayTrendValue(for: .finger(.middle)), 78)
+    }
+
+    // Break caught: Demo Mode outcomes can reach the report as ordinary measured
+    // results after their session wrappers are aggregated.
+    @MainActor
+    func testReportRetainsExplicitSimulatedProvenance() {
+        let provenance: [RehabExperience: SessionProvenance] = [
+            .exercise(.balance): .demo,
+            .exercise(.squeeze): .live,
+            .wristAssessment: .demo,
+            .handAssessment: .live
+        ]
+
+        let report = AfterCareReport.make(
+            history: .fixture,
+            assessment: .fixture,
+            gameplay: [.fixture(for: .balance), .fixture(for: .squeeze)],
+            symptoms: .comfortable,
+            reviewThreshold: 6,
+            sessionProvenance: provenance
+        )
+
+        XCTAssertEqual(report.simulatedResultLabels, ["Balance Platform", "Wrist assessment"])
+        XCTAssertEqual(
+            report.simulationNote,
+            "SIMULATED DEMO RESULTS — Balance Platform, Wrist assessment"
+        )
+    }
+
+    // Break caught: a simulated Sheep Drop outcome can be counted in the
+    // report while omitted from the explicit simulation disclosure.
+    @MainActor
+    func testReportLabelsSimulatedSheepDropProvenance() {
+        let report = AfterCareReport.make(
+            history: .fixture,
+            assessment: .fixture,
+            gameplay: [.fixture(for: .sheepDrop)],
+            symptoms: .comfortable,
+            reviewThreshold: 6,
+            sessionProvenance: [.exercise(.sheepDrop): .demo]
+        )
+
+        XCTAssertEqual(report.simulatedResultLabels, ["Sheep Drop"])
+        XCTAssertEqual(report.simulationNote, "SIMULATED DEMO RESULTS — Sheep Drop")
     }
 
     func testFingerROMRequiresTwoAttemptsAndReportsExcursion() {

@@ -23,6 +23,8 @@ final class AppState {
     private(set) var stage: Stage = .home
     private(set) var medicationConfirmed = false
     private(set) var exerciseResults: [ExerciseKind: GameplayResult] = [:]
+    private(set) var sessionOutcomes: [RehabExperience: RehabSessionOutcome] = [:]
+    private(set) var activeSession: ActiveRehabSession?
     private(set) var assessmentResult: AssessmentResult?
     private var wristAssessment: AssessmentResult.WristResult?
     private(set) var symptomResult: SymptomResult?
@@ -69,13 +71,91 @@ final class AppState {
 
     @discardableResult
     func completeExercise(_ exercise: ExerciseKind, result: GameplayResult) -> Bool {
-        guard canStartExercises, result.exercise == exercise, exerciseResults[exercise] == nil else {
+        let prescribedGoal = prescription.goal(for: .exercise(exercise))
+        guard canStartExercises,
+              result.exercise == exercise,
+              result.prescribedDose == prescribedGoal,
+              result.completedDose == prescribedGoal,
+              exerciseResults[exercise] == nil else {
             return false
         }
         exerciseResults[exercise] = result
         if canStartAssessment {
             stage = .wristAssessment
         }
+        return true
+    }
+
+    @discardableResult
+    func activateSession(
+        _ request: RehabSessionRequest,
+        provenance: SessionProvenance
+    ) -> Bool {
+        guard activeSession == nil,
+              request.affectedHand == prescription.affectedHand,
+              request == prescription.sessionRequest(for: request.experience),
+              request.hasValidGoal,
+              canActivate(request.experience) else {
+            return false
+        }
+        activeSession = ActiveRehabSession(
+            request: request,
+            provenance: provenance
+        )
+        return true
+    }
+
+    func cancelActiveSession() {
+        activeSession = nil
+    }
+
+    @discardableResult
+    func route(_ outcome: RehabSessionOutcome) -> Bool {
+        guard activeSession == ActiveRehabSession(
+                  request: outcome.request,
+                  provenance: outcome.provenance
+              ),
+              outcome.request.affectedHand == prescription.affectedHand,
+              outcome.progress.completed == outcome.progress.goal,
+              outcome.progress.goal == outcome.request.goal,
+              outcome.payload.matches(outcome.request),
+              sessionOutcomes[outcome.request.experience] == nil else {
+            return false
+        }
+
+        let accepted: Bool
+        switch (outcome.request.experience, outcome.payload) {
+        case let (.exercise(exercise), .gameplay(result)):
+            accepted = completeExercise(exercise, result: result)
+        case let (.wristAssessment, .wristAssessment(result)):
+            accepted = completeWristAssessment(result)
+        case let (.handAssessment, .handAssessment(result)):
+            accepted = completeHandROMAssessment(result)
+        default:
+            accepted = false
+        }
+        if accepted {
+            sessionOutcomes[outcome.request.experience] = outcome
+            activeSession = nil
+        }
+        return accepted
+    }
+
+    @discardableResult
+    func cancelSessionAndReturnToRoutine() -> Bool {
+        guard stage == .wristAssessment || stage == .handAssessment,
+              canStartAssessment else {
+            return false
+        }
+        activeSession = nil
+        stage = .routine
+        return true
+    }
+
+    @discardableResult
+    func startAssessment() -> Bool {
+        guard stage == .routine, canStartAssessment else { return false }
+        stage = wristAssessment == nil ? .wristAssessment : .handAssessment
         return true
     }
 
@@ -133,10 +213,25 @@ final class AppState {
         stage = .home
         medicationConfirmed = false
         exerciseResults.removeAll()
+        sessionOutcomes.removeAll()
+        activeSession = nil
         assessmentResult = nil
         wristAssessment = nil
         symptomResult = nil
         reportViewed = false
         petIsFull = false
+    }
+
+    private func canActivate(_ experience: RehabExperience) -> Bool {
+        switch (stage, experience) {
+        case let (.routine, .exercise(exercise)):
+            canStartExercises && exerciseResults[exercise] == nil
+        case (.wristAssessment, .wristAssessment):
+            canStartAssessment
+        case (.handAssessment, .handAssessment):
+            wristAssessment != nil
+        default:
+            false
+        }
     }
 }

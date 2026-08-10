@@ -52,5 +52,6 @@ struct MovementObservation: Equatable, Sendable {
 
 protocol MovementObservationSource: AnyObject {
     var latestObservation: MovementObservation { get }
+    var latestJointFrame: HandJointFrame? { get }
     var isFallback: Bool { get }
 }

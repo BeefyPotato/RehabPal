@@ -41,10 +41,19 @@ struct GameplayResult: Equatable, Sendable {
     let trackingNote: String
 
     nonisolated static func fixture(for exercise: ExerciseKind) -> GameplayResult {
-        GameplayResult(
+        let dose: Int
+        switch exercise {
+        case .balance:
+            dose = Prescription.demo.balanceTargetCount
+        case .squeeze:
+            dose = Prescription.demo.squeezeRepetitions
+        case .sheepDrop:
+            dose = Prescription.demo.sheepDropRepetitions
+        }
+        return GameplayResult(
             exercise: exercise,
-            prescribedDose: exercise == .balance ? 8 : 5,
-            completedDose: exercise == .balance ? 8 : 5,
+            prescribedDose: dose,
+            completedDose: dose,
             trackingNote: "Tracking remained usable"
         )
     }
@@ -71,6 +80,30 @@ struct AssessmentResult: Equatable, Sendable {
         return (wrist.trackingConfidence + Float(fingerConfidence.reduce(0, +) / Double(fingerConfidence.count))) / 2
     }
 
+    var availableWristControlScore: Int? {
+        wrist.trackingConfidence >= 0.6 ? wrist.controlScore : nil
+    }
+
+    var availableClosureConsistencyScore: Int? {
+        let available = handROM.values.filter(\.isAvailable)
+        guard !available.isEmpty else { return nil }
+        return Int(available.map(\.consistency).reduce(0, +) / Double(available.count))
+    }
+
+    func availableFingerROM(for digit: HandDigit) -> DigitROMSummary? {
+        guard let summary = handROM[digit], summary.isAvailable else { return nil }
+        return summary
+    }
+
+    func todayTrendValue(for metric: AssessmentTrendMetric) -> Double? {
+        switch metric {
+        case .wrist:
+            availableWristControlScore.map(Double.init)
+        case let .finger(digit):
+            availableFingerROM(for: digit)?.totalExcursion
+        }
+    }
+
     init(wristControlScore: Int, closureConsistencyScore: Int, trackingConfidence: Float) {
         wrist = WristResult(controlScore: wristControlScore, trackingConfidence: trackingConfidence)
         handROM = Dictionary(uniqueKeysWithValues: HandDigit.allCases.map { digit in
@@ -88,6 +121,11 @@ struct AssessmentResult: Equatable, Sendable {
         closureConsistencyScore: 76,
         trackingConfidence: 0.92
     )
+}
+
+enum AssessmentTrendMetric: Equatable, Sendable {
+    case wrist
+    case finger(HandDigit)
 }
 
 enum HandDigit: String, CaseIterable, Codable, Hashable, Sendable {

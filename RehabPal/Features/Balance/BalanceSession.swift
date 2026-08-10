@@ -1,125 +1,262 @@
 import Foundation
 import simd
 
-enum BalanceQuadrant: CaseIterable, Equatable, Sendable {
-    case frontLeft, frontRight, backLeft, backRight
-}
-
 struct BalanceTarget: Equatable, Sendable {
     let x: Float
     let z: Float
-    let quadrant: BalanceQuadrant
+
     var position: SIMD2<Float> { [x, z] }
 }
 
 struct BalanceTargetSchedule: Equatable, Sendable {
+    static let maximumOffset: Float = 0.09
+    static let ballStart = SIMD2<Float>(0, -0.066)
+    static let minimumDistanceFromBallStart: Float = 0.084
+
     let targets: [BalanceTarget]
 
-    init(seed: UInt64) {
-        let positions: [BalanceQuadrant: [(Float, Float)]] = [
-            .frontLeft: [(-0.17, -0.10), (-0.09, -0.055)],
-            .frontRight: [(0.17, -0.10), (0.09, -0.055)],
-            .backLeft: [(-0.17, 0.10), (-0.09, 0.055)],
-            .backRight: [(0.17, 0.10), (0.09, 0.055)]
-        ]
-        var rng = SeededGenerator(seed: seed)
-        var remaining = Dictionary(uniqueKeysWithValues: BalanceQuadrant.allCases.map { ($0, positions[$0]!.shuffled(using: &rng)) })
-        var order: [BalanceQuadrant] = []
-        while order.count < 8 {
-            var choices = BalanceQuadrant.allCases.filter { remaining[$0]?.isEmpty == false && $0 != order.last }
-            choices.shuffle(using: &rng)
-            let selected = choices[0]
-            order.append(selected)
-            _ = remaining[selected]?.removeLast()
+    init(seed: UInt64, targetCount: Int) {
+        var generator = SeededGenerator(seed: seed)
+        targets = (0..<max(1, targetCount)).map { _ in
+            for _ in 0..<20 {
+                let target = BalanceTarget(
+                    x: Float.random(in: -Self.maximumOffset...Self.maximumOffset, using: &generator),
+                    z: Float.random(in: -Self.maximumOffset...Self.maximumOffset, using: &generator)
+                )
+                if simd_distance(target.position, Self.ballStart) >= Self.minimumDistanceFromBallStart {
+                    return target
+                }
+            }
+            return BalanceTarget(x: 0, z: 0.066)
         }
-        var indices = Dictionary(uniqueKeysWithValues: BalanceQuadrant.allCases.map { ($0, 0) })
-        targets = order.map { quadrant in
-            let pair = positions[quadrant]![indices[quadrant, default: 0]]
-            indices[quadrant, default: 0] += 1
-            return BalanceTarget(x: pair.0, z: pair.1, quadrant: quadrant)
+    }
+}
+
+struct BalanceRotation: Equatable, Sendable {
+    let quaternion: simd_quatf
+
+    static let identity = BalanceRotation(quaternion: simd_quatf(angle: 0, axis: [0, 1, 0]))
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        abs(simd_dot(lhs.quaternion.vector, rhs.quaternion.vector)) > 0.999_999
+    }
+}
+
+enum BalanceReferenceRotation {
+    static func target(for delta: simd_quatf) -> simd_quatf {
+        simd_slerp(.init(angle: 0, axis: [0, 1, 0]), delta, 0.6)
+    }
+
+    static func smoothed(current: simd_quatf, delta: simd_quatf) -> simd_quatf {
+        simd_slerp(current, target(for: delta), 0.08)
+    }
+}
+
+struct BalanceRenderRotationState: Sendable {
+    private(set) var latestDelta: simd_quatf?
+
+    mutating func retain(_ rotation: BalanceRotation) {
+        latestDelta = rotation.quaternion
+    }
+
+    mutating func clear() {
+        latestDelta = nil
+    }
+
+    func nextOrientation(from current: simd_quatf) -> simd_quatf? {
+        latestDelta.map { BalanceReferenceRotation.smoothed(current: current, delta: $0) }
+    }
+}
+
+enum BalanceRenderPolling {
+    static func shouldPoll(isDemo: Bool, phase: RehabSessionPhase) -> Bool {
+        guard !isDemo else { return false }
+        switch phase {
+        case let .active(request, _, _), let .paused(request, _, _):
+            return request.experience == .exercise(.balance)
+        case .idle, .starting, .completed, .failed:
+            return false
         }
+    }
+}
+
+enum BalanceEvent: Equatable, Sendable {
+    case waitingForCalibration
+    case paused
+    case active(BalanceRotation)
+    case resetBall(BalanceRotation)
+    case scored(completed: Int, goal: Int, tilt: BalanceRotation, isComplete: Bool)
+}
+
+/// Pure state machine for the calibrated balance game. RealityKit owns the
+/// physics body; this processor owns safe scoring, calibration, and progress.
+struct BalanceSession: Sendable {
+    static let holeRadius: Float = 0.024
+
+    let affectedHand: AffectedHand
+    let goal: Int
+    let schedule: BalanceTargetSchedule
+    let isSimulated: Bool
+    let calibrationFrameGoal = 25
+
+    private(set) var completedSuccesses = 0
+    private(set) var calibrationProgress = 0
+    private(set) var result: GameplayResult?
+    private var calibration: WristNeutralCalibration?
+    private var lastCalibrationTimestamp: TimeInterval?
+    private var shouldResetOnResume = false
+
+    init(prescription: Prescription, seed: UInt64) {
+        self.init(
+            affectedHand: prescription.affectedHand,
+            goal: prescription.balanceTargetCount,
+            seed: seed,
+            isSimulated: false
+        )
+    }
+
+    init(
+        affectedHand: AffectedHand,
+        goal: Int,
+        seed: UInt64,
+        isSimulated: Bool = false
+    ) {
+        self.affectedHand = affectedHand
+        self.goal = max(1, goal)
+        self.isSimulated = isSimulated
+        schedule = BalanceTargetSchedule(seed: seed, targetCount: goal)
+    }
+
+    var isCalibrated: Bool { calibration != nil }
+    var requiredJoints: Set<HandJoint> {
+        isCalibrated ? [.wrist] : WristNeutralCalibration.requiredJoints
+    }
+    var isComplete: Bool { completedSuccesses == goal }
+    var progress: SessionProgress {
+        SessionProgress(completed: completedSuccesses, goal: goal, partial: 0)
+    }
+    var currentTarget: BalanceTarget {
+        schedule.targets[min(completedSuccesses, schedule.targets.count - 1)]
+    }
+
+    mutating func pause(requiresRecalibration: Bool) {
+        guard !isComplete else { return }
+        shouldResetOnResume = true
+        if requiresRecalibration {
+            clearCalibration()
+        } else if !isCalibrated {
+            resetCalibrationProgress()
+        }
+    }
+
+    mutating func process(
+        frame: HandJointFrame?,
+        ballPosition: SIMD2<Float>,
+        ballEscaped: Bool
+    ) -> BalanceEvent {
+        guard !isComplete else { return .paused }
+        guard let frame, frame.isForAffectedHand(affectedHand) else {
+            guard isCalibrated else {
+                resetCalibrationProgress()
+                return .waitingForCalibration
+            }
+            shouldResetOnResume = true
+            return .paused
+        }
+
+        var calibratedThisFrame = false
+        if calibration == nil {
+            guard frame.timestamp.isFinite else {
+                resetCalibrationProgress()
+                return .waitingForCalibration
+            }
+            guard let captured = WristNeutralCalibration.capture(from: frame) else {
+                resetCalibrationProgress()
+                return .waitingForCalibration
+            }
+            if let lastCalibrationTimestamp {
+                guard frame.timestamp >= lastCalibrationTimestamp else {
+                    resetCalibrationProgress()
+                    return .waitingForCalibration
+                }
+                guard frame.timestamp > lastCalibrationTimestamp else {
+                    return .waitingForCalibration
+                }
+            }
+
+            lastCalibrationTimestamp = frame.timestamp
+            calibrationProgress += 1
+            guard calibrationProgress == calibrationFrameGoal else {
+                return .waitingForCalibration
+            }
+            calibration = captured
+            calibratedThisFrame = true
+        }
+        guard frame.joint(.wrist)?.transform != nil,
+              let calibration,
+              let relativeRotation = calibration.relativeRotation(for: frame) else {
+            shouldResetOnResume = true
+            return .paused
+        }
+
+        let tilt = BalanceRotation(quaternion: relativeRotation)
+        if shouldResetOnResume {
+            shouldResetOnResume = false
+            return .resetBall(tilt)
+        }
+        if calibratedThisFrame {
+            return .active(tilt)
+        }
+        if ballEscaped {
+            return .resetBall(tilt)
+        }
+        guard simd_distance(ballPosition, currentTarget.position) <= Self.holeRadius else {
+            return .active(tilt)
+        }
+
+        completedSuccesses += 1
+        let completed = isComplete
+        if completed {
+            result = GameplayResult(
+                exercise: .balance,
+                prescribedDose: goal,
+                completedDose: completedSuccesses,
+                trackingNote: isSimulated
+                    ? "Simulated from explicit Demo Mode physics ball drops"
+                    : "Measured from calibrated affected-hand wrist tilt and physics ball drops"
+            )
+        }
+        return .scored(
+            completed: completedSuccesses,
+            goal: goal,
+            tilt: tilt,
+            isComplete: completed
+        )
+    }
+
+    private mutating func clearCalibration() {
+        calibration = nil
+        resetCalibrationProgress()
+    }
+
+    private mutating func resetCalibrationProgress() {
+        calibrationProgress = 0
+        lastCalibrationTimestamp = nil
     }
 }
 
 private struct SeededGenerator: RandomNumberGenerator {
     var state: UInt64
-    init(seed: UInt64) { state = seed == 0 ? 0x9E3779B97F4A7C15 : seed }
+
+    init(seed: UInt64) {
+        state = seed == 0 ? 0x9E3779B97F4A7C15 : seed
+    }
+
     mutating func next() -> UInt64 {
         state &+= 0x9E3779B97F4A7C15
         var value = state
         value = (value ^ (value >> 30)) &* 0xBF58476D1CE4E5B9
         value = (value ^ (value >> 27)) &* 0x94D049BB133111EB
         return value ^ (value >> 31)
-    }
-}
-
-struct MovingHoleBalanceSession: Sendable {
-    let schedule: BalanceTargetSchedule
-    let requiredRepetitions: Int
-    let dwellSeconds: TimeInterval
-    private(set) var completedRepetitions = 0
-    private var enteredAt: TimeInterval?
-
-    init(seed: UInt64, requiredRepetitions: Int = 8, dwellSeconds: TimeInterval = 0.5) {
-        schedule = BalanceTargetSchedule(seed: seed)
-        self.requiredRepetitions = min(max(requiredRepetitions, 1), schedule.targets.count)
-        self.dwellSeconds = dwellSeconds
-    }
-
-    var currentTarget: BalanceTarget { schedule.targets[min(completedRepetitions, schedule.targets.count - 1)] }
-    var progress: Double { Double(completedRepetitions) / Double(requiredRepetitions) }
-    var isComplete: Bool { completedRepetitions >= requiredRepetitions }
-
-    mutating func update(ballPosition: SIMD2<Float>, at time: TimeInterval, isTracked: Bool) -> Bool {
-        guard !isComplete else { return true }
-        guard isTracked else { enteredAt = nil; return false }
-        guard simd_distance(ballPosition, currentTarget.position) <= 0.055 else { enteredAt = nil; return false }
-        if enteredAt == nil { enteredAt = time; return false }
-        guard time - enteredAt! >= dwellSeconds else { return false }
-        completedRepetitions += 1
-        enteredAt = nil
-        return isComplete
-    }
-}
-
-struct BalanceSchedule: Equatable, Sendable {
-    let directions: [WristDirection]
-
-    init(correctionsPerDirection: Int, shuffle: Bool = true) {
-        let balanced = WristDirection.allCases.flatMap { direction in
-            Array(repeating: direction, count: max(0, correctionsPerDirection))
-        }
-        directions = shuffle ? balanced.shuffled() : balanced
-    }
-}
-
-struct BalanceSession: Sendable {
-    let schedule: BalanceSchedule
-    let requiredHoldSeconds: TimeInterval
-    private(set) var completedCorrections = 0
-
-    init(correctionsPerDirection: Int, requiredHoldSeconds: TimeInterval, shuffle: Bool = true) {
-        schedule = BalanceSchedule(correctionsPerDirection: correctionsPerDirection, shuffle: shuffle)
-        self.requiredHoldSeconds = requiredHoldSeconds
-    }
-
-    var currentDirection: WristDirection? {
-        guard completedCorrections < schedule.directions.count else { return nil }
-        return schedule.directions[completedCorrections]
-    }
-
-    var isComplete: Bool {
-        !schedule.directions.isEmpty && completedCorrections == schedule.directions.count
-    }
-
-    var progress: Double {
-        guard !schedule.directions.isEmpty else { return 0 }
-        return Double(completedCorrections) / Double(schedule.directions.count)
-    }
-
-    mutating func registerCentreHold(seconds: TimeInterval, isTracked: Bool) -> Bool {
-        guard isTracked, !isComplete, seconds >= requiredHoldSeconds else { return false }
-        completedCorrections += 1
-        return isComplete
     }
 }
