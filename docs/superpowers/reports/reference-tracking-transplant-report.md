@@ -34,6 +34,9 @@ Date: 2026-08-10
   drags, stale drag end, wrist-only Sheep recalibration, and exact 0.020 m accepted
   versus 0.0201 m rejected calibration spread on nonzero straight fixtures, plus
   explicit zero-span rejection.
+- Legacy calibration fixtures now use a nonzero straight knuckle span and reject
+  only spread above 0.020 m. Recovery and introduction media copy consistently
+  instruct system pinch, drag, and release rather than five-fingertip control.
 - `xcodebuild build-for-testing` for generic visionOS Simulator: passed.
 - `xcodebuild build` for generic visionOS Simulator: passed.
 - `git diff --check`: passed.

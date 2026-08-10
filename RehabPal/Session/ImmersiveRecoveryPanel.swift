@@ -35,7 +35,7 @@ struct ImmersiveRecoveryPresentation: Equatable, Sendable {
         case .exercise(.squeeze):
             "Show your prescribed wrist and cup your hand around the ball again."
         case .exercise(.sheepDrop):
-            "Show your prescribed wrist, then bring all five fingertips around the sheep."
+            "Show your prescribed wrist, then use the system pinch to drag and release the sheep."
         case .wristAssessment:
             "Show your prescribed wrist and return to the prompted neutral pose."
         case .handAssessment:

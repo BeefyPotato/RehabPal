@@ -12,7 +12,7 @@ enum InstructionMediaKind: String {
         switch self {
         case .balance: "Tilt your wrist to guide the ball"
         case .squeeze: "Close, hold, then fully reopen"
-        case .sheepDrop: "Bring all five fingertips together, then release over the pen"
+        case .sheepDrop: "System-pinch the sheep, drag it over the pen, then release"
         case .wristAssessment: "Move smoothly in each direction"
         case .fingerROM: "Bend and straighten one finger"
         }

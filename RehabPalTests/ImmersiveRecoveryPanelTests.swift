@@ -2,6 +2,11 @@ import XCTest
 @testable import RehabPal
 
 final class ImmersiveRecoveryPanelTests: XCTestCase {
+    func testSheepInstructionMediaUsesTargetedDragCopy() {
+        XCTAssertTrue(InstructionMediaKind.sheepDrop.title.localizedCaseInsensitiveContains("system-pinch"))
+        XCTAssertTrue(InstructionMediaKind.sheepDrop.title.localizedCaseInsensitiveContains("drag"))
+        XCTAssertFalse(InstructionMediaKind.sheepDrop.title.localizedCaseInsensitiveContains("five fingertips"))
+    }
     // Mutation caught: showing both normal guidance and recovery guidance
     // recreates the overlapping text that blocks the hand prompt.
     func testRecoveryPresentationReplacesNormalInstructionForBriefAndLongLoss() throws {
@@ -21,6 +26,8 @@ final class ImmersiveRecoveryPanelTests: XCTestCase {
             canConfirmRecalibration: true
         ))
         XCTAssertEqual(long.title, "Recalibration required")
+        XCTAssertTrue(long.instruction.localizedCaseInsensitiveContains("system pinch"))
+        XCTAssertFalse(long.instruction.localizedCaseInsensitiveContains("five fingertips"))
         XCTAssertTrue(long.showsRecalibrate)
         XCTAssertTrue(long.canRecalibrate)
     }

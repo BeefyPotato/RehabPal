@@ -185,13 +185,7 @@ final class JointFrameTests: XCTestCase {
                 .ringFingerKnuckle: .tracked(transform: matrix_identity_float4x4)
             ]
         )
-        let complete = HandJointFrame.synthetic(
-            hand: .right,
-            timestamp: 2,
-            joints: Dictionary(uniqueKeysWithValues: WristNeutralCalibration.requiredJoints.map { joint in
-                (joint, .tracked(transform: matrix_identity_float4x4))
-            })
-        )
+        let complete = referenceCalibrationFrame(timestamp: 2)
 
         XCTAssertNil(WristNeutralCalibration.capture(from: incomplete))
         XCTAssertNotNil(WristNeutralCalibration.capture(from: complete))
@@ -199,13 +193,12 @@ final class JointFrameTests: XCTestCase {
 
     // Break caught: accepting knuckles at materially different heights makes an unstable, non-level pose neutral.
     func testCalibrationRejectsKnucklesThatAreNotLevel() {
-        var joints = Dictionary(uniqueKeysWithValues: WristNeutralCalibration.requiredJoints.map { joint in
-            (joint, HandJointSample.tracked(transform: matrix_identity_float4x4))
-        })
-        joints[.littleFingerKnuckle] = .tracked(transform: simd_float4x4(
-            translation: SIMD3<Float>(0, 0.02, 0)
-        ))
-        let frame = HandJointFrame.synthetic(hand: .right, timestamp: 1, joints: joints)
+        let frame = referenceCalibrationFrame(
+            timestamp: 1,
+            middleOffset: [0, 0.006_7, 0],
+            ringOffset: [0, 0.013_4, 0],
+            littlePosition: [0.12, 0.020_1, 0]
+        )
 
         XCTAssertNil(WristNeutralCalibration.capture(from: frame))
     }
