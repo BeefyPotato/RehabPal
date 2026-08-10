@@ -442,6 +442,42 @@ final class ExerciseSessionTests: XCTestCase {
         })
     }
 
+    // Break caught: restoring the prototype's fixed world height makes the
+    // platform too low or too high for viewers whose eye height differs.
+    func testBalancePlatformPlacementUsesViewerHeightWithinSafetyBounds() {
+        XCTAssertEqual(
+            BalancePlatformPlacement.position(viewerPosition: [0.2, 1.6, 0.1]),
+            [0, 1.2, -1]
+        )
+        XCTAssertEqual(
+            BalancePlatformPlacement.position(viewerPosition: [0, 1.1, 0]),
+            [0, 0.85, -1]
+        )
+        XCTAssertEqual(
+            BalancePlatformPlacement.position(viewerPosition: [0, 0.8, 0]),
+            [0, 0.72, -1]
+        )
+        XCTAssertEqual(
+            BalancePlatformPlacement.position(viewerPosition: nil),
+            [0, 0.9, -1]
+        )
+    }
+
+    // Break caught: applying later head poses after scene creation makes the
+    // physical tray and HUD drift while a ball attempt is in progress.
+    func testBalancePlatformPlacementLatchKeepsTheFirstViewerPose() {
+        var latch = BalancePlatformPlacementLatch()
+
+        let first = latch.lock(viewerPosition: [0.2, 1.1, 0.1])
+        let later = latch.lock(viewerPosition: [3, 1.6, 4])
+        let unavailable = latch.lock(viewerPosition: nil)
+
+        XCTAssertEqual(first, [0, 0.85, -1])
+        XCTAssertEqual(later, first)
+        XCTAssertEqual(unavailable, first)
+        XCTAssertEqual(latch.position, first)
+    }
+
     // Break caught: accepting fewer than 25 unique level-hand samples makes a
     // transient pose the neutral reference instead of requiring a stable hold.
     func testBalanceCalibrationRequiresTwentyFiveUniqueConsecutiveValidFrames() {

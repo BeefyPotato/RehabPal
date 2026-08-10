@@ -6,6 +6,26 @@ private final class BalanceSubscriptionHolder {
     var update: EventSubscription?
 }
 
+enum BalancePlatformPlacement {
+    static func position(viewerPosition: SIMD3<Float>?) -> SIMD3<Float> {
+        guard let viewerPosition else { return [0, 0.9, -1] }
+        return [0, min(max(viewerPosition.y - 0.25, 0.72), 1.20), -1]
+    }
+}
+
+struct BalancePlatformPlacementLatch {
+    private(set) var position: SIMD3<Float>?
+
+    mutating func lock(viewerPosition: SIMD3<Float>?) -> SIMD3<Float> {
+        if let position {
+            return position
+        }
+        let lockedPosition = BalancePlatformPlacement.position(viewerPosition: viewerPosition)
+        position = lockedPosition
+        return lockedPosition
+    }
+}
+
 /// The physical balance game rendered inside the app's one shared mixed space.
 struct BalancePlatformView: View {
     let coordinator: RehabSessionCoordinator
@@ -20,8 +40,9 @@ struct BalancePlatformView: View {
     @State private var ballActive = false
     @State private var respawnCountdown: TimeInterval = 0
     @State private var recalibrationGeneration: Int?
+    @State private var placementLatch = BalancePlatformPlacementLatch()
 
-    private let trayPosition = SIMD3<Float>(0, 0.9, -1)
+    private let hudOffset = SIMD3<Float>(0, 0.28, 0.1)
     private let trayRadius: Float = 0.12
     private let wallHeight: Float = 0.025
     private let floorThickness: Float = 0.006
@@ -54,6 +75,9 @@ struct BalancePlatformView: View {
 
     var body: some View {
         RealityView { content, attachments in
+            let lockedTrayPosition = placementLatch.lock(
+                viewerPosition: coordinator.currentViewerPosition
+            )
             let root = Entity()
             root.name = "BalancePlatformRoot"
 
@@ -62,7 +86,7 @@ struct BalancePlatformView: View {
             root.components.set(simulation)
 
             buildTray()
-            tray.position = trayPosition
+            tray.position = lockedTrayPosition
             root.addChild(tray)
 
             hole = makeHole()
@@ -72,7 +96,7 @@ struct BalancePlatformView: View {
             root.addChild(ball)
 
             if let hud = attachments.entity(for: "balance-hud") {
-                hud.position = [0, 1.18, -0.9]
+                hud.position = lockedTrayPosition + hudOffset
                 root.addChild(hud)
             }
 
@@ -87,7 +111,7 @@ struct BalancePlatformView: View {
             if let hud = attachments.entity(for: "balance-hud"),
                hud.parent == nil,
                let root = content.entities.first {
-                hud.position = [0, 1.18, -0.9]
+                hud.position = trayPosition + hudOffset
                 root.addChild(hud)
             }
         } attachments: {
@@ -218,6 +242,10 @@ struct BalancePlatformView: View {
         transform.translation = trayPosition
         transform.rotation = smoothed
         tray.setTransformMatrix(transform.matrix, relativeTo: nil)
+    }
+
+    private var trayPosition: SIMD3<Float> {
+        placementLatch.position ?? BalancePlatformPlacement.position(viewerPosition: nil)
     }
 
     private func placeHoleAndBall() {
