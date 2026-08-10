@@ -60,6 +60,11 @@ enum SheepDropAssistedProgressAction {
         nextTimestamp: inout TimeInterval
     ) -> Bool {
         guard session.phase != .complete else { return false }
+        nextTimestamp = max(
+            nextTimestamp,
+            (session.latestInputTimestamp ?? nextTimestamp) + 0.01
+        )
+        session.prepareForAssistedProgress()
         let before = session.completedDrops
         let spawn = SheepDropObservation(
             position: session.spawnPosition,
@@ -227,6 +232,14 @@ struct SheepDropSession: Sendable {
             partial = 0
         }
         return SessionProgress(completed: completedDrops, goal: goal, partial: partial)
+    }
+    var latestInputTimestamp: TimeInterval? { lastTimestamp }
+
+    mutating func prepareForAssistedProgress() {
+        guard phase != .complete else { return }
+        clearAttemptState()
+        phaseBeforePause = nil
+        phase = .waitingForHand
     }
 
     mutating func process(

@@ -535,8 +535,27 @@ final class RehabSessionCoordinator {
 
     @discardableResult
     func finish(with payload: SessionOutcomePayload) -> RehabSessionOutcome? {
-        guard case let .active(request, progress, provenance) = phase,
-              progress.completed == progress.goal,
+        let request: RehabSessionRequest
+        let progress: SessionProgress
+        let provenance: SessionProvenance
+        switch phase {
+        case let .active(activeRequest, activeProgress, activeProvenance):
+            request = activeRequest
+            progress = activeProgress
+            provenance = activeProvenance
+        case let .paused(activeRequest, pausedProgress, reason):
+            guard case .trackingLost = reason,
+                  lastAssistedRegisteredCompletion == pausedProgress.goal,
+                  assistedProgressCount > 0 else {
+                return nil
+            }
+            request = activeRequest
+            progress = pausedProgress
+            provenance = .live
+        case .idle, .starting, .failed, .completed:
+            return nil
+        }
+        guard progress.completed == progress.goal,
               payload.matches(request) else {
             return nil
         }

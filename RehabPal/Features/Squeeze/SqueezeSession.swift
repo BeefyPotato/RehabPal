@@ -293,6 +293,10 @@ enum SqueezeAssistedProgressAction {
         nextTimestamp: inout TimeInterval
     ) -> Bool {
         guard !session.isComplete else { return false }
+        nextTimestamp = max(
+            nextTimestamp,
+            (session.latestInputTimestamp ?? nextTimestamp) + 0.01
+        )
         let before = session.completedRepetitions
         if !session.isCalibrated {
             for timestamp in SqueezeDemoSampling.graspTimestamps(startingAt: nextTimestamp) {
@@ -337,6 +341,7 @@ struct SqueezeSession: Sendable {
     private var detector: SqueezeRepDetector
     private var graspGate = SqueezeGraspGate()
     private let isSimulated: Bool
+    private var lastInputTimestamp: TimeInterval?
 
     private(set) var facePose: SqueezeFacePose?
     private(set) var normalizedClosure: Float = 0
@@ -399,6 +404,7 @@ struct SqueezeSession: Sendable {
     var statusLabel: String? {
         graspGate.baseline == nil ? nil : Self.graspStatusLabel
     }
+    var latestInputTimestamp: TimeInterval? { lastInputTimestamp }
 
     mutating func process(frame: HandJointFrame?) -> SqueezeEvent {
         guard let frame, let sample = SqueezeHandSample(frame: frame) else {
@@ -427,6 +433,9 @@ struct SqueezeSession: Sendable {
             normalizedClosure = 0
             graspGate.resetCandidate()
             return .waitingForGrasp
+        }
+        if sample.timestamp.isFinite {
+            lastInputTimestamp = max(lastInputTimestamp ?? sample.timestamp, sample.timestamp)
         }
 
         if graspGate.baseline == nil {

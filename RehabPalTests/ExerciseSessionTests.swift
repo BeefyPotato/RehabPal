@@ -1291,7 +1291,8 @@ final class ExerciseSessionTests: XCTestCase {
         let facePose = try XCTUnwrap(session.facePose)
         let presentation = SqueezeHUDPresentation(
             statusLabel: session.statusLabel,
-            graspDetected: true
+            graspDetected: true,
+            isDemo: true
         )
 
         XCTAssertNil(facePose.surfacePosition(toward: nil))
@@ -1414,6 +1415,23 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertTrue(SqueezeAssistedProgressAction.process(session: &session, nextTimestamp: &timestamp))
         XCTAssertEqual(session.completedRepetitions, 2)
         XCTAssertFalse(SqueezeAssistedProgressAction.process(session: &session, nextTimestamp: &timestamp))
+    }
+
+    func testSqueezeAssistedActionSeedsAfterLatestLiveTimestamp() {
+        var session = SqueezeSession(repetitions: 2, closeThreshold: 0.7, reopenThreshold: 0.3, holdSeconds: 0.5)
+        acceptSqueezeBaseline(in: &session, startingAt: 5_000)
+        var clock: TimeInterval = 0
+        XCTAssertTrue(SqueezeAssistedProgressAction.process(session: &session, nextTimestamp: &clock))
+        XCTAssertEqual(session.completedRepetitions, 1)
+        XCTAssertGreaterThan(clock, 5_000)
+    }
+
+    func testSqueezeHUDShowsSimulatedOnlyForDemoProvenance() {
+        XCTAssertNil(SqueezeHUDPresentation(statusLabel: nil, graspDetected: false, isDemo: false).provenanceLabel)
+        XCTAssertEqual(
+            SqueezeHUDPresentation(statusLabel: nil, graspDetected: false, isDemo: true).provenanceLabel,
+            "SIMULATED"
+        )
     }
 
     private func acceptSqueezeBaseline(in session: inout SqueezeSession, startingAt timestamp: TimeInterval) {

@@ -37,3 +37,13 @@ The first RED run also exposed a test-helper naming error; that test was correct
 - Completion retains the count in both the coordinator and outcome. Starting or cancelling a session resets it.
 - Sheep placement/orientation and the shared recovery/back panel were intentionally not changed in this task.
 - Physical Vision Pro behavior remains for final acceptance.
+
+## Independent Review Fixes
+
+- Assisted Squeeze, Sheep, wrist-diagnostic, and finger-diagnostic clocks now seed strictly after the processor/session's latest real input timestamp. Balance retains its existing chronology seam.
+- Sheep assisted progress first discards the incomplete local attempt and then runs one complete deterministic pickup/carry/open/settle sequence. Regression coverage includes waiting, forming-grasp, carrying, falling/released, brief-paused, and recalibration-paused states.
+- A final registered assisted unit can finish from a tracking-loss paused coordinator while retaining live provenance, its validated payload, goal progress, and assisted count. Non-final assisted progress remains paused, and other lifecycle states remain unable to finish.
+- Squeeze presentation now exposes `SIMULATED` only for Demo provenance; a live session shows only the explicit assisted-action disclosure.
+- Added authorization/reset/preservation coverage for assisted controls and provenance counts.
+
+Review-fix verification repeated the focused simulator attempt. Xcode again remained at `waiting for workers to materialize`; it was interrupted after about 28 seconds with no runtime assertion executed. Generic compilation remains the executable evidence available in this environment.

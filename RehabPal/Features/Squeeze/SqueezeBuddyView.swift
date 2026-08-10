@@ -8,6 +8,7 @@ private final class SqueezeSubscriptionHolder {
 struct SqueezeHUDPresentation: Equatable {
     let statusLabel: String?
     let graspDetected: Bool
+    let isDemo: Bool
 
     var graspDisclosure: String? {
         graspDetected ? statusLabel : nil
@@ -18,6 +19,7 @@ struct SqueezeHUDPresentation: Equatable {
             ? "Complete close–hold–reopen (Demo Mode)"
             : "Detect grasp (Demo Mode)"
     }
+    var provenanceLabel: String? { isDemo ? "SIMULATED" : nil }
 }
 
 /// An inferred overlay for the user's physical stress ball. The scene contains
@@ -89,7 +91,8 @@ struct SqueezeBuddyView: View {
                     phase: game.phase,
                     presentation: SqueezeHUDPresentation(
                         statusLabel: game.statusLabel,
-                        graspDetected: game.facePose != nil
+                        graspDetected: game.facePose != nil,
+                        isDemo: coordinator.isUsingDemoMode
                     ),
                     pauseReason: coordinator.pauseReason,
                     isDemo: coordinator.isUsingDemoMode,
@@ -283,7 +286,9 @@ private struct SqueezeHUD: View {
                 Text("ASSISTED — NOT TRACKED")
                     .font(.caption2.bold())
                     .foregroundStyle(.orange)
-                Text("SIMULATED")
+            }
+            if let provenanceLabel = presentation.provenanceLabel {
+                Text(provenanceLabel)
                     .font(.caption2.bold())
                     .foregroundStyle(.orange)
             }

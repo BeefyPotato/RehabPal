@@ -622,6 +622,94 @@ final class RehabSessionCoordinatorTests: XCTestCase {
         let result = GameplayResult(exercise: .squeeze, prescribedDose: request.goal, completedDose: request.goal, trackingNote: "Measured")
         let outcome = try XCTUnwrap(coordinator.finish(with: .gameplay(result)))
         XCTAssertEqual(outcome.assistedProgressCount, 1)
+        XCTAssertEqual(coordinator.assistedProgressCount, 1)
+
+        coordinator.cancel()
+        XCTAssertEqual(coordinator.assistedProgressCount, 0)
+    }
+
+    func testAssistedControlAuthorizationCoversLiveDemoPausedAndDisablesTerminalPhases() {
+        let request = RehabSessionRequest(experience: .exercise(.squeeze), prescription: .demo)
+        let progress = SessionProgress(completed: 0, goal: request.goal, partial: 0)
+        XCTAssertTrue(AssistedProgressControl.isAuthorized(
+            .active(request: request, progress: progress, provenance: .live),
+            for: request.experience
+        ))
+        XCTAssertTrue(AssistedProgressControl.isAuthorized(
+            .active(request: request, progress: progress, provenance: .demo),
+            for: request.experience
+        ))
+        XCTAssertTrue(AssistedProgressControl.isAuthorized(
+            .paused(request: request, progress: progress, reason: .trackingLost(requiresRecalibration: true)),
+            for: request.experience
+        ))
+        XCTAssertFalse(AssistedProgressControl.isAuthorized(.starting(request), for: request.experience))
+        XCTAssertFalse(AssistedProgressControl.isAuthorized(.idle, for: request.experience))
+        XCTAssertFalse(AssistedProgressControl.isAuthorized(
+            .active(
+                request: request,
+                progress: SessionProgress(completed: request.goal, goal: request.goal, partial: 0),
+                provenance: .live
+            ),
+            for: request.experience
+        ))
+    }
+
+    // Mutation caught: restricting finish to `.active` strands a valid final
+    // assisted processor transition at N/N while tracking recovery is paused.
+    @MainActor
+    func testFinalAssistedProgressCanFinishFromBriefAndLongTrackingPause() async throws {
+        for lossDuration in [0.1, RehabSessionCoordinator.recalibrationDelay + 0.1] {
+            let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: TestLiveJointSource())
+            let request = RehabSessionRequest(experience: .exercise(.squeeze), prescription: .demo)
+            await coordinator.startLiveForTesting(request)
+            coordinator.accept(SessionProgress(completed: request.goal - 1, goal: request.goal, partial: 0))
+            coordinator.receiveJointFrame(nil, at: 100)
+            if lossDuration >= RehabSessionCoordinator.recalibrationDelay {
+                coordinator.receiveJointFrame(nil, at: 100 + lossDuration)
+            }
+            XCTAssertTrue(coordinator.registerAssistedProgress(from: request.goal - 1, to: request.goal))
+            coordinator.accept(SessionProgress(completed: request.goal, goal: request.goal, partial: 0))
+
+            let payload = GameplayResult(
+                exercise: .squeeze,
+                prescribedDose: request.goal,
+                completedDose: request.goal,
+                trackingNote: "Measured with assisted disclosure"
+            )
+            let outcome = try XCTUnwrap(coordinator.finish(with: .gameplay(payload)))
+            XCTAssertEqual(outcome.provenance, .live)
+            XCTAssertEqual(outcome.progress.completed, request.goal)
+            XCTAssertEqual(outcome.assistedProgressCount, 1)
+            XCTAssertEqual(outcome.payload, .gameplay(payload))
+        }
+    }
+
+    @MainActor
+    func testPausedFinishRejectsNonfinalOrUnregisteredProgressAndNonfinalAssistanceStaysPaused() async {
+        let coordinator = RehabSessionCoordinator(prescription: .demo, liveTracking: TestLiveJointSource())
+        let request = RehabSessionRequest(experience: .exercise(.squeeze), prescription: .demo)
+        await coordinator.startLiveForTesting(request)
+        coordinator.receiveJointFrame(nil, at: 1)
+
+        XCTAssertTrue(coordinator.registerAssistedProgress(from: 0, to: 1))
+        coordinator.accept(SessionProgress(completed: 1, goal: request.goal, partial: 0))
+        XCTAssertEqual(coordinator.progress?.completed, 1)
+        XCTAssertNotNil(coordinator.pauseReason)
+        XCTAssertNil(coordinator.finish(with: .gameplay(GameplayResult(
+            exercise: .squeeze,
+            prescribedDose: request.goal,
+            completedDose: request.goal,
+            trackingNote: "Invalid early finish"
+        ))))
+
+        coordinator.cancel()
+        XCTAssertNil(coordinator.finish(with: .gameplay(GameplayResult(
+            exercise: .squeeze,
+            prescribedDose: request.goal,
+            completedDose: request.goal,
+            trackingNote: "Idle finish"
+        ))))
     }
 
     // Break caught: ARKit provider interruption/authorization events can leave

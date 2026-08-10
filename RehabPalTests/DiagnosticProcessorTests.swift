@@ -17,6 +17,24 @@ final class DiagnosticProcessorTests: XCTestCase {
         XCTAssertTrue(FingerDiagnosticAssistedProgressAction.process(processor: &finger, nextTimestamp: &fingerTimestamp))
         XCTAssertEqual(finger.completedAttempts, 1)
     }
+
+    // Mutation caught: seeding assisted frames at zero makes the live fallback
+    // stale after a processor has consumed system-uptime observations.
+    func testAssistedDiagnosticsSeedStrictlyAfterLatestLiveTimestamp() {
+        var wrist = WristDiagnosticProcessor(affectedHand: .right, attemptsPerTarget: 2)
+        _ = wrist.process(frame: wristFrame(at: 8_000, pitchDegrees: 0, rollDegrees: 0))
+        var wristClock: TimeInterval = 0
+        XCTAssertTrue(WristDiagnosticAssistedProgressAction.process(processor: &wrist, nextTimestamp: &wristClock))
+        XCTAssertEqual(wrist.completedAttempts, 1)
+        XCTAssertGreaterThan(wristClock, 8_000)
+
+        var finger = FingerROMDiagnosticProcessor(affectedHand: .right, attemptsPerDigit: 2)
+        _ = finger.process(sample: fingerSample(.thumb, at: 9_000, flexion: .zero, opposition: 0.08))
+        var fingerClock: TimeInterval = 0
+        XCTAssertTrue(FingerDiagnosticAssistedProgressAction.process(processor: &finger, nextTimestamp: &fingerClock))
+        XCTAssertEqual(finger.completedAttempts, 1)
+        XCTAssertGreaterThan(fingerClock, 9_000)
+    }
     private let degree = Float.pi / 180
 
     // Break caught: a diagnostic could calibrate from the non-prescribed hand or skip the standardized target order.

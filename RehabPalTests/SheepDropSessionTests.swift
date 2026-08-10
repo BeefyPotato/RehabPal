@@ -29,6 +29,57 @@ final class SheepDropSessionTests: XCTestCase {
         XCTAssertEqual(session.completedDrops, 2)
         XCTAssertFalse(SheepDropAssistedProgressAction.process(session: &session, nextTimestamp: &timestamp))
     }
+
+    // Mutation caught: a zero-based synthetic clock is rejected after live
+    // hand tracking has already published uptime-based timestamps.
+    func testAssistedActionSeedsAfterLatestLiveTimestamp() {
+        var session = makeSession(goal: 2)
+        let sheep = observation(position: sheepPosition, resting: true)
+        _ = session.process(frame: handFrame(timestamp: 7_000, tips: clusteredTips), observation: sheep, at: 7_000)
+        var clock: TimeInterval = 0
+        XCTAssertTrue(SheepDropAssistedProgressAction.process(session: &session, nextTimestamp: &clock))
+        XCTAssertEqual(session.completedDrops, 1)
+        XCTAssertGreaterThan(clock, 7_000)
+    }
+
+    // Mutation caught: replaying a pickup gesture without first safely
+    // discarding the local phase fails from carrying/falling/paused states.
+    func testAssistedActionAdvancesOneDropFromEveryCommonLocalPhase() {
+        var sessions: [SheepDropSession] = []
+        sessions.append(makeSession(goal: 2))
+
+        var forming = makeSession(goal: 2)
+        let sheep = observation(position: sheepPosition, resting: true)
+        _ = forming.process(frame: handFrame(timestamp: 1, tips: clusteredTips), observation: sheep, at: 1)
+        sessions.append(forming)
+
+        var carrying = makeSession(goal: 2)
+        beginCarry(session: &carrying, sheep: sheep, baseTime: 2)
+        sessions.append(carrying)
+
+        sessions.append(releasedSession(goal: 2))
+
+        var briefPaused = makeSession(goal: 2)
+        _ = briefPaused.pause(requiresRecalibration: false)
+        sessions.append(briefPaused)
+
+        var recalibrationPaused = carrying
+        _ = recalibrationPaused.pause(requiresRecalibration: true)
+        sessions.append(recalibrationPaused)
+
+        for index in sessions.indices {
+            var clock: TimeInterval = 20_000 + Double(index) * 10
+            let before = sessions[index].completedDrops
+            XCTAssertTrue(
+                SheepDropAssistedProgressAction.process(
+                    session: &sessions[index],
+                    nextTimestamp: &clock
+                ),
+                "Assisted transition failed for phase matrix index \(index)"
+            )
+            XCTAssertEqual(sessions[index].completedDrops, before + 1)
+        }
+    }
     private let sheepPosition = SIMD3<Float>(0.10, 0.08, -0.05)
 
     // Break caught: extracting fewer than five fingertip positions, or using an

@@ -84,6 +84,7 @@ struct WristDiagnosticProcessor: Sendable {
     var trackingConfidence: Float {
         requiredFrameCount == 0 ? 0 : Float(validFrameCount) / Float(requiredFrameCount)
     }
+    var latestInputTimestamp: TimeInterval? { lastObservedFrameTimestamp }
     var progress: SessionProgress {
         let partial: Double
         if let holdStartedAt, let lastFrameTimestamp, !isReturningToNeutral {
@@ -377,6 +378,10 @@ enum WristDiagnosticAssistedProgressAction {
         nextTimestamp: inout TimeInterval
     ) -> Bool {
         guard !processor.isComplete else { return false }
+        nextTimestamp = max(
+            nextTimestamp,
+            (processor.latestInputTimestamp ?? nextTimestamp) + 0.01
+        )
         let before = processor.completedAttempts
         if !processor.isCalibrated {
             _ = processor.process(frame: frame(processor: processor, target: .center, at: nextTimestamp))
@@ -506,6 +511,10 @@ enum FingerDiagnosticAssistedProgressAction {
         nextTimestamp: inout TimeInterval
     ) -> Bool {
         guard !processor.isComplete, let digit = processor.currentDigit else { return false }
+        nextTimestamp = max(
+            nextTimestamp,
+            (processor.latestInputTimestamp ?? nextTimestamp) + 0.01
+        )
         let before = processor.completedAttempts
         let baselineOpposition: Float? = digit == .thumb ? 0.08 : nil
         let steps = Int(ceil(processor.configuration.extensionStabilitySeconds / 0.1))
@@ -644,6 +653,7 @@ struct FingerROMDiagnosticProcessor: Sendable {
     var trackingConfidence: Double {
         requiredFrameCount == 0 ? 0 : Double(validFrameCount) / Double(requiredFrameCount)
     }
+    var latestInputTimestamp: TimeInterval? { lastObservedFrameTimestamp }
     var progress: SessionProgress {
         let partial: Double
         if reachedExcursion {
