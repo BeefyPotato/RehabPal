@@ -44,7 +44,7 @@ struct ContentView: View {
                     } else {
                         DailyRoutineView(state: state) { exercise in
                             selectedExercise = exercise
-                            exerciseStarted = Self.beginsRoutineExerciseImmediately(exercise)
+                            exerciseStarted = false
                         }
                     }
                 case .wristAssessment:
@@ -174,7 +174,7 @@ struct ContentView: View {
     private var currentRequest: RehabSessionRequest? {
         switch DemoRouter.screen(for: state) {
         case .routine:
-            return Self.routineExerciseRequest(
+            return Self.sessionRequest(
                 for: selectedExercise,
                 hasBegun: exerciseStarted,
                 prescription: state.prescription
@@ -188,23 +188,14 @@ struct ContentView: View {
         }
     }
 
-    static func routineExerciseRequest(
+    static func sessionRequest(
         for exercise: ExerciseKind?,
         hasBegun: Bool,
         prescription: Prescription
     ) -> RehabSessionRequest? {
         guard let exercise else { return nil }
-        guard hasBegun || beginsRoutineExerciseImmediately(exercise) else { return nil }
+        guard !exercise.requiresExplicitBegin || hasBegun else { return nil }
         return prescription.sessionRequest(for: .exercise(exercise))
-    }
-
-    static func beginsRoutineExerciseImmediately(_ exercise: ExerciseKind) -> Bool {
-        switch exercise {
-        case .balance:
-            true
-        case .squeeze, .sheepDrop:
-            false
-        }
     }
 
     private func transition(to request: RehabSessionRequest?) async {
@@ -337,6 +328,12 @@ struct ContentView: View {
              let .immersiveSpaceFailed(message):
             message
         }
+    }
+}
+
+extension ExerciseKind {
+    var requiresExplicitBegin: Bool {
+        true
     }
 }
 

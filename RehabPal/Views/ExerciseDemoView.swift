@@ -21,7 +21,7 @@ struct ExerciseDemoView: View {
         self.useDemoFallback = useDemoFallback
         self.onBegin = onBegin
         self.onCancel = onCancel
-        _started = State(initialValue: exercise == .balance)
+        _started = State(initialValue: false)
     }
 
     var body: some View {

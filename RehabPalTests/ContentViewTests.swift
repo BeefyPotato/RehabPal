@@ -2,20 +2,20 @@ import XCTest
 @testable import RehabPal
 
 final class ContentViewTests: XCTestCase {
-    // Break caught: a new exercise with a visible Begin action can start live
-    // tracking before the patient explicitly begins its prescribed dose.
-    func testSqueezeAndSheepDropRequireBeginBeforeCreatingTheirSessionRequests() {
-        for exercise in [ExerciseKind.squeeze, .sheepDrop] {
-            XCTAssertFalse(ContentView.beginsRoutineExerciseImmediately(exercise))
+    // Break caught: selecting an exercise opens live tracking before the
+    // patient confirms the prescribed dose with Begin.
+    func testExercisesRequireBeginBeforeCreatingTheirSessionRequests() {
+        for exercise in [ExerciseKind.balance, .squeeze, .sheepDrop] {
+            XCTAssertTrue(exercise.requiresExplicitBegin)
             XCTAssertNil(
-                ContentView.routineExerciseRequest(
+                ContentView.sessionRequest(
                     for: exercise,
                     hasBegun: false,
                     prescription: .demo
                 )
             )
             XCTAssertEqual(
-                ContentView.routineExerciseRequest(
+                ContentView.sessionRequest(
                     for: exercise,
                     hasBegun: true,
                     prescription: .demo
@@ -25,15 +25,15 @@ final class ContentViewTests: XCTestCase {
         }
     }
 
-    func testBalanceCreatesItsSessionRequestWithoutAnExplicitBeginAction() {
-        XCTAssertTrue(ContentView.beginsRoutineExerciseImmediately(.balance))
-        XCTAssertEqual(
-            ContentView.routineExerciseRequest(
-                for: .balance,
+    // Break caught: cancelling the exercise introduction leaves a request
+    // behind that opens an immersive session after returning to the routine.
+    func testCancellingExerciseSelectionCreatesNoSessionRequest() {
+        XCTAssertNil(
+            ContentView.sessionRequest(
+                for: nil,
                 hasBegun: false,
                 prescription: .demo
-            ),
-            Prescription.demo.sessionRequest(for: .exercise(.balance))
+            )
         )
     }
 }
