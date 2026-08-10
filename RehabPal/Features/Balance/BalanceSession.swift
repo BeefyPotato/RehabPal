@@ -49,10 +49,13 @@ struct BalanceSession: Sendable {
     let goal: Int
     let schedule: BalanceTargetSchedule
     let isSimulated: Bool
+    let calibrationFrameGoal = 25
 
     private(set) var completedSuccesses = 0
+    private(set) var calibrationProgress = 0
     private(set) var result: GameplayResult?
     private var calibration: WristNeutralCalibration?
+    private var lastCalibrationTimestamp: TimeInterval?
     private var shouldResetOnResume = false
 
     init(prescription: Prescription, seed: UInt64) {
@@ -77,6 +80,9 @@ struct BalanceSession: Sendable {
     }
 
     var isCalibrated: Bool { calibration != nil }
+    var requiredJoints: Set<HandJoint> {
+        isCalibrated ? [.wrist] : WristNeutralCalibration.requiredJoints
+    }
     var isComplete: Bool { completedSuccesses == goal }
     var progress: SessionProgress {
         SessionProgress(completed: completedSuccesses, goal: goal, partial: 0)
@@ -89,7 +95,7 @@ struct BalanceSession: Sendable {
         guard !isComplete else { return }
         shouldResetOnResume = true
         if requiresRecalibration {
-            calibration = nil
+            clearCalibration()
         }
     }
 
@@ -100,14 +106,37 @@ struct BalanceSession: Sendable {
     ) -> BalanceEvent {
         guard !isComplete else { return .paused }
         guard let frame, frame.isForAffectedHand(affectedHand) else {
-            guard isCalibrated else { return .waitingForCalibration }
+            guard isCalibrated else {
+                resetCalibrationProgress()
+                return .waitingForCalibration
+            }
             shouldResetOnResume = true
             return .paused
         }
 
         var calibratedThisFrame = false
         if calibration == nil {
+            guard frame.timestamp.isFinite else {
+                resetCalibrationProgress()
+                return .waitingForCalibration
+            }
+            if let lastCalibrationTimestamp {
+                guard frame.timestamp >= lastCalibrationTimestamp else {
+                    resetCalibrationProgress()
+                    return .waitingForCalibration
+                }
+                guard frame.timestamp > lastCalibrationTimestamp else {
+                    return .waitingForCalibration
+                }
+            }
             guard let captured = WristNeutralCalibration.capture(from: frame) else {
+                resetCalibrationProgress()
+                return .waitingForCalibration
+            }
+
+            lastCalibrationTimestamp = frame.timestamp
+            calibrationProgress += 1
+            guard calibrationProgress == calibrationFrameGoal else {
                 return .waitingForCalibration
             }
             calibration = captured
@@ -152,6 +181,16 @@ struct BalanceSession: Sendable {
             tilt: tilt,
             isComplete: completed
         )
+    }
+
+    private mutating func clearCalibration() {
+        calibration = nil
+        resetCalibrationProgress()
+    }
+
+    private mutating func resetCalibrationProgress() {
+        calibrationProgress = 0
+        lastCalibrationTimestamp = nil
     }
 }
 

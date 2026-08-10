@@ -442,6 +442,217 @@ final class ExerciseSessionTests: XCTestCase {
         })
     }
 
+    // Break caught: accepting fewer than 25 unique level-hand samples makes a
+    // transient pose the neutral reference instead of requiring a stable hold.
+    func testBalanceCalibrationRequiresTwentyFiveUniqueConsecutiveValidFrames() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+
+        XCTAssertEqual(session.calibrationFrameGoal, 25)
+        for index in 0..<24 {
+            XCTAssertEqual(
+                session.process(
+                    frame: calibratedFrame(hand: .right, timestamp: Double(index)),
+                    ballPosition: BalanceTargetSchedule.ballStart,
+                    ballEscaped: false
+                ),
+                .waitingForCalibration
+            )
+            XCTAssertEqual(session.calibrationProgress, index + 1)
+        }
+        XCTAssertFalse(session.isCalibrated)
+
+        let capturedWrist = MovementMath.wristTransform(pitch: 0.18, roll: -0.12, yaw: 0.3)
+        guard case let .active(capturedTilt) = session.process(
+            frame: calibratedFrame(hand: .right, timestamp: 24, wrist: capturedWrist),
+            ballPosition: BalanceTargetSchedule.ballStart,
+            ballEscaped: false
+        ) else {
+            return XCTFail("Expected frame 25 to activate from its captured wrist neutral")
+        }
+        XCTAssertEqual(capturedTilt.pitch, 0, accuracy: 0.0001)
+        XCTAssertEqual(capturedTilt.roll, 0, accuracy: 0.0001)
+        XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(session.calibrationProgress, 25)
+    }
+
+    // Break caught: processing the same published tracking frame repeatedly
+    // can satisfy the hold without 25 distinct hand-tracking updates.
+    func testBalanceCalibrationDoesNotCountRepeatedTimestampsTwice() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+
+        _ = session.process(
+            frame: calibratedFrame(hand: .right, timestamp: 0),
+            ballPosition: BalanceTargetSchedule.ballStart,
+            ballEscaped: false
+        )
+        for _ in 0..<30 {
+            XCTAssertEqual(
+                session.process(
+                    frame: calibratedFrame(hand: .right, timestamp: 0),
+                    ballPosition: BalanceTargetSchedule.ballStart,
+                    ballEscaped: false
+                ),
+                .waitingForCalibration
+            )
+        }
+
+        XCTAssertEqual(session.calibrationProgress, 1)
+        XCTAssertFalse(session.isCalibrated)
+        for timestamp in 1..<24 {
+            _ = session.process(
+                frame: calibratedFrame(hand: .right, timestamp: Double(timestamp)),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            )
+        }
+        XCTAssertEqual(session.calibrationProgress, 24)
+        XCTAssertFalse(session.isCalibrated)
+        _ = session.process(
+            frame: calibratedFrame(hand: .right, timestamp: 24),
+            ballPosition: BalanceTargetSchedule.ballStart,
+            ballEscaped: false
+        )
+        XCTAssertTrue(session.isCalibrated)
+    }
+
+    // Break caught: a missing frame between level-hand samples can leave the
+    // old partial hold alive and calibrate from nonconsecutive observations.
+    func testBalanceCalibrationMissingFrameResetsProgress() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        advanceBalanceCalibration(&session, through: 9)
+
+        XCTAssertEqual(
+            session.process(frame: nil, ballPosition: .zero, ballEscaped: false),
+            .waitingForCalibration
+        )
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+    }
+
+    // Break caught: an unaffected-hand sample between valid samples can leave
+    // the affected hand's partial calibration hold intact.
+    func testBalanceCalibrationWrongHandFrameResetsProgress() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        advanceBalanceCalibration(&session, through: 9)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .left, timestamp: 10),
+                ballPosition: .zero,
+                ballEscaped: false
+            ),
+            .waitingForCalibration
+        )
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+    }
+
+    // Break caught: an incomplete or nonlevel hand pose can be ignored without
+    // breaking the stable-hold streak, allowing separated valid frames to calibrate.
+    func testBalanceCalibrationInvalidPoseResetsProgress() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        advanceBalanceCalibration(&session, through: 9)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(
+                    hand: .right,
+                    timestamp: 10,
+                    omit: .littleFingerKnuckle
+                ),
+                ballPosition: .zero,
+                ballEscaped: false
+            ),
+            .waitingForCalibration
+        )
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+    }
+
+    // Break caught: accepting an older frame after a newer one lets stale data
+    // extend the calibration hold and can capture an obsolete wrist transform.
+    func testBalanceCalibrationRegressedTimestampResetsProgress() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        advanceBalanceCalibration(&session, through: 9)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .right, timestamp: 8),
+                ballPosition: .zero,
+                ballEscaped: false
+            ),
+            .waitingForCalibration
+        )
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+    }
+
+    // Break caught: NaN or infinite timestamps can bypass ordering checks and
+    // poison chronology state while still contributing a valid-looking pose.
+    func testBalanceCalibrationNonfiniteTimestampResetsProgress() {
+        for timestamp in [TimeInterval.nan, .infinity, -.infinity] {
+            var session = BalanceSession(prescription: .demo, seed: 6)
+            advanceBalanceCalibration(&session, through: 9)
+
+            XCTAssertEqual(
+                session.process(
+                    frame: calibratedFrame(hand: .right, timestamp: timestamp),
+                    ballPosition: .zero,
+                    ballEscaped: false
+                ),
+                .waitingForCalibration
+            )
+            XCTAssertEqual(session.calibrationProgress, 0)
+            XCTAssertFalse(session.isCalibrated)
+        }
+    }
+
+    // Break caught: continuing to require calibration knuckles after neutral is
+    // captured makes ordinary wrist steering pause when fingers are occluded.
+    func testBalanceRequiredJointsSwitchFromCalibrationPoseToWristOnly() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+
+        XCTAssertEqual(session.requiredJoints, WristNeutralCalibration.requiredJoints)
+        calibrateBalance(&session)
+        XCTAssertEqual(session.requiredJoints, Set([HandJoint.wrist]))
+    }
+
+    // Break caught: post-calibration knuckle occlusion can pause usable wrist
+    // tracking even though only wrist orientation drives the tray.
+    func testBalanceActiveTrackingIgnoresMissingKnuckles() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        calibrateBalance(&session)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(
+                    hand: .right,
+                    timestamp: 25,
+                    omit: .littleFingerKnuckle
+                ),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            ),
+            .active(WristTilt(pitch: 0, roll: 0))
+        )
+    }
+
+    // Break caught: a missing wrist can leave physics active using a stale
+    // transform even though the steering joint is unavailable.
+    func testBalanceActiveTrackingPausesWithoutWrist() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        calibrateBalance(&session)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .right, timestamp: 26, omit: .wrist),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            ),
+            .paused
+        )
+    }
+
     // Break caught: calibration from the wrong hand or from fewer than four level knuckles can steer the prescribed exercise.
     func testBalanceCalibratesOnlyFromTheAffectedHandAndFourLevelKnuckles() {
         var session = BalanceSession(prescription: .demo, seed: 7)
@@ -451,7 +662,12 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertEqual(session.process(frame: incomplete, ballPosition: .zero, ballEscaped: false), .waitingForCalibration)
         XCTAssertFalse(session.isCalibrated)
 
-        let event = session.process(frame: calibratedFrame(hand: .right), ballPosition: .zero, ballEscaped: false)
+        advanceBalanceCalibration(&session, through: 23)
+        let event = session.process(
+            frame: calibratedFrame(hand: .right, timestamp: 24),
+            ballPosition: .zero,
+            ballEscaped: false
+        )
         XCTAssertEqual(event, .active(WristTilt(pitch: 0, roll: 0)))
         XCTAssertTrue(session.isCalibrated)
     }
@@ -460,7 +676,7 @@ final class ExerciseSessionTests: XCTestCase {
     func testBalanceScoresOnlyTrackedBallDropsAndQueuesTheNextBallReset() {
         var session = BalanceSession(prescription: .demo, seed: 9)
         let frame = calibratedFrame(hand: .right)
-        _ = session.process(frame: frame, ballPosition: .zero, ballEscaped: false)
+        calibrateBalance(&session)
 
         XCTAssertEqual(session.process(frame: nil, ballPosition: session.currentTarget.position, ballEscaped: false), .paused)
         XCTAssertEqual(session.completedSuccesses, 0)
@@ -484,7 +700,7 @@ final class ExerciseSessionTests: XCTestCase {
     func testBalanceEscapeRequestsResetWithoutChangingScore() {
         var session = BalanceSession(prescription: .demo, seed: 11)
         let frame = calibratedFrame(hand: .right)
-        _ = session.process(frame: frame, ballPosition: .zero, ballEscaped: false)
+        calibrateBalance(&session)
 
         XCTAssertEqual(
             session.process(frame: frame, ballPosition: SIMD2<Float>(1, 1), ballEscaped: true),
@@ -493,33 +709,74 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertEqual(session.completedSuccesses, 0)
     }
 
-    // Break caught: resuming physics with partial ball motion or an obsolete neutral after a long interruption violates pause safety.
-    func testBalancePauseFreezesPhysicsDiscardsThePartialBallAndCanRequireRecalibration() {
+    // Break caught: a brief interruption can discard a valid neutral or resume
+    // a partially moving ball instead of preserving calibration and resetting it.
+    func testBalanceBriefLossRetainsCalibrationAndResetsBallOnRecovery() {
         var session = BalanceSession(prescription: .demo, seed: 13)
         let frame = calibratedFrame(hand: .right)
-        _ = session.process(frame: frame, ballPosition: .zero, ballEscaped: false)
+        calibrateBalance(&session)
 
         session.pause(requiresRecalibration: false)
+        XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(session.calibrationProgress, 25)
         XCTAssertEqual(session.process(frame: nil, ballPosition: .zero, ballEscaped: false), .paused)
         XCTAssertEqual(session.process(frame: frame, ballPosition: .zero, ballEscaped: false), .resetBall(WristTilt(pitch: 0, roll: 0)))
         XCTAssertTrue(session.isCalibrated)
+    }
+
+    // Break caught: a long interruption can retain an obsolete neutral, accept
+    // fewer than 25 replacement frames, or erase already completed targets.
+    func testBalanceLongLossRequiresNewCalibrationWithoutErasingCompletedProgress() {
+        var session = BalanceSession(prescription: .demo, seed: 13)
+        calibrateBalance(&session)
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .right, timestamp: 25),
+                ballPosition: session.currentTarget.position,
+                ballEscaped: false
+            ),
+            .scored(
+                completed: 1,
+                goal: 10,
+                tilt: WristTilt(pitch: 0, roll: 0),
+                isComplete: false
+            )
+        )
 
         session.pause(requiresRecalibration: true)
         XCTAssertFalse(session.isCalibrated)
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertEqual(session.completedSuccesses, 1)
         XCTAssertEqual(session.process(frame: nil, ballPosition: .zero, ballEscaped: false), .paused)
-        XCTAssertEqual(session.process(frame: frame, ballPosition: .zero, ballEscaped: false), .resetBall(WristTilt(pitch: 0, roll: 0)))
+        for timestamp in 100..<124 {
+            XCTAssertEqual(
+                session.process(
+                    frame: calibratedFrame(hand: .right, timestamp: Double(timestamp)),
+                    ballPosition: BalanceTargetSchedule.ballStart,
+                    ballEscaped: false
+                ),
+                .waitingForCalibration
+            )
+        }
+        XCTAssertFalse(session.isCalibrated)
+        XCTAssertEqual(session.calibrationProgress, 24)
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .right, timestamp: 124),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            ),
+            .resetBall(WristTilt(pitch: 0, roll: 0))
+        )
         XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(session.completedSuccesses, 1)
     }
 
     // Break caught: absolute wrist rotation, yaw leakage, or a shared magnitude clamp can create unsafe tray motion.
     func testBalanceTiltIsNeutralRelativeYawFreeAndIndependentlyClamped() {
         let neutral = MovementMath.wristTransform(pitch: 0.18, roll: -0.12, yaw: 0.3)
         var session = BalanceSession(prescription: .demo, seed: 15)
-        _ = session.process(
-            frame: calibratedFrame(hand: .right, wrist: neutral),
-            ballPosition: BalanceTargetSchedule.ballStart,
-            ballEscaped: false
-        )
+        calibrateBalance(&session, wrist: neutral)
 
         let yawOnly = simd_mul(MovementMath.wristTransform(pitch: 0, roll: 0, yaw: 0.7), neutral)
         guard case let .active(yawTilt) = session.process(
@@ -548,7 +805,7 @@ final class ExerciseSessionTests: XCTestCase {
     func testBalanceCompletionProducesAMeasuredGameplayResult() throws {
         var session = BalanceSession(prescription: .demo, seed: 17)
         let frame = calibratedFrame(hand: .right)
-        _ = session.process(frame: frame, ballPosition: .zero, ballEscaped: false)
+        calibrateBalance(&session)
 
         for expected in 1...10 {
             let event = session.process(frame: frame, ballPosition: session.currentTarget.position, ballEscaped: false)
@@ -577,7 +834,7 @@ final class ExerciseSessionTests: XCTestCase {
             isSimulated: true
         )
         let frame = calibratedFrame(hand: .right)
-        _ = session.process(frame: frame, ballPosition: .zero, ballEscaped: false)
+        calibrateBalance(&session)
         _ = session.process(frame: frame, ballPosition: session.currentTarget.position, ballEscaped: false)
 
         let result = try XCTUnwrap(session.result)
@@ -794,6 +1051,7 @@ final class ExerciseSessionTests: XCTestCase {
 
     private func calibratedFrame(
         hand: AffectedHand,
+        timestamp: TimeInterval = 1,
         wrist: simd_float4x4 = matrix_identity_float4x4,
         omit omittedJoint: HandJoint? = nil
     ) -> HandJointFrame {
@@ -808,7 +1066,33 @@ final class ExerciseSessionTests: XCTestCase {
             joints[joint] = .tracked(transform: simd_float4x4(translation: SIMD3<Float>(x, 0, 0)))
         }
         if omittedJoint == .wrist { joints[.wrist] = nil }
-        return .synthetic(hand: hand, timestamp: 1, joints: joints)
+        return .synthetic(hand: hand, timestamp: timestamp, joints: joints)
+    }
+
+    private func advanceBalanceCalibration(
+        _ session: inout BalanceSession,
+        through lastTimestamp: Int,
+        wrist: simd_float4x4 = matrix_identity_float4x4
+    ) {
+        for timestamp in 0...lastTimestamp {
+            _ = session.process(
+                frame: calibratedFrame(
+                    hand: .right,
+                    timestamp: Double(timestamp),
+                    wrist: wrist
+                ),
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            )
+        }
+    }
+
+    private func calibrateBalance(
+        _ session: inout BalanceSession,
+        wrist: simd_float4x4 = matrix_identity_float4x4
+    ) {
+        advanceBalanceCalibration(&session, through: 24, wrist: wrist)
+        XCTAssertTrue(session.isCalibrated)
     }
 
     private func request(for experience: RehabExperience) -> RehabSessionRequest {
