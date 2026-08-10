@@ -230,6 +230,17 @@ struct WristDiagnosticProcessor: Sendable {
         }
     }
 
+    mutating func prepareForAssistedAttempt() {
+        guard !isComplete else { return }
+        resetPartialAttempt()
+    }
+
+    func assistedWristTransform(pitch: Float, roll: Float) -> simd_float4x4 {
+        let relative = MovementMath.wristTransform(pitch: pitch, roll: roll)
+        guard let calibration else { return relative }
+        return simd_mul(calibration.wristTransform, relative)
+    }
+
     static func controlScore(
         targetErrorsDegrees: [Float],
         holdJitterDegrees: [Float]
@@ -383,6 +394,7 @@ enum WristDiagnosticAssistedProgressAction {
             (processor.latestInputTimestamp ?? nextTimestamp) + 0.01
         )
         let before = processor.completedAttempts
+        processor.prepareForAssistedAttempt()
         if !processor.isCalibrated {
             _ = processor.process(frame: frame(processor: processor, target: .center, at: nextTimestamp))
         }
@@ -416,13 +428,25 @@ enum WristDiagnosticAssistedProgressAction {
         case .left: (pitch, roll) = (0, -radians)
         case .right: (pitch, roll) = (0, radians)
         }
-        let transform = MovementMath.wristTransform(pitch: pitch, roll: roll)
+        let transform = processor.assistedWristTransform(pitch: pitch, roll: roll)
+        let orderedKnuckles: [HandJoint] = [
+            .indexFingerKnuckle,
+            .middleFingerKnuckle,
+            .ringFingerKnuckle,
+            .littleFingerKnuckle
+        ]
+        var joints: [HandJoint: HandJointSample] = [
+            .wrist: .tracked(transform: transform)
+        ]
+        for (index, joint) in orderedKnuckles.enumerated() {
+            var knuckleTransform = transform
+            knuckleTransform.columns.3 = SIMD4<Float>(Float(index) * 0.02 - 0.03, 0, 0, 1)
+            joints[joint] = .tracked(transform: knuckleTransform)
+        }
         return .synthetic(
             hand: processor.affectedHand,
             timestamp: timestamp,
-            joints: Dictionary(uniqueKeysWithValues: WristNeutralCalibration.requiredJoints.map {
-                ($0, HandJointSample.tracked(transform: transform))
-            })
+            joints: joints
         )
     }
 }
@@ -516,6 +540,7 @@ enum FingerDiagnosticAssistedProgressAction {
             (processor.latestInputTimestamp ?? nextTimestamp) + 0.01
         )
         let before = processor.completedAttempts
+        processor.pause()
         let baselineOpposition: Float? = digit == .thumb ? 0.08 : nil
         let steps = Int(ceil(processor.configuration.extensionStabilitySeconds / 0.1))
         for step in 0...steps {

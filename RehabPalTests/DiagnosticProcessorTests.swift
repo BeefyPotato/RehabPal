@@ -35,6 +35,41 @@ final class DiagnosticProcessorTests: XCTestCase {
         XCTAssertEqual(finger.completedAttempts, 1)
         XCTAssertGreaterThan(fingerClock, 9_000)
     }
+
+    // Mutation caught: generating assisted wrist poses around identity makes the
+    // fallback fail after live calibration captures a non-identity neutral pose.
+    func testAssistedWristAttemptUsesTheCapturedLiveNeutralOrientation() {
+        var processor = WristDiagnosticProcessor(affectedHand: .right, attemptsPerTarget: 2)
+        _ = processor.process(frame: wristFrame(at: 100, pitchDegrees: 30, rollDegrees: -15))
+        var clock: TimeInterval = 0
+
+        XCTAssertTrue(WristDiagnosticAssistedProgressAction.process(
+            processor: &processor,
+            nextTimestamp: &clock
+        ))
+        XCTAssertEqual(processor.completedAttempts, 1)
+    }
+
+    // Mutation caught: retaining a partial live ROM baseline causes the
+    // deterministic assisted extension/flexion/return sequence to be rejected.
+    func testAssistedFingerAttemptDiscardsAnIncompleteLiveAttempt() {
+        var processor = FingerROMDiagnosticProcessor(affectedHand: .right, attemptsPerDigit: 2)
+        for step in 0...3 {
+            _ = processor.process(sample: fingerSample(
+                .thumb,
+                at: 200 + Double(step) / 10,
+                flexion: [20, 20, 20],
+                opposition: 0.08
+            ))
+        }
+        var clock: TimeInterval = 0
+
+        XCTAssertTrue(FingerDiagnosticAssistedProgressAction.process(
+            processor: &processor,
+            nextTimestamp: &clock
+        ))
+        XCTAssertEqual(processor.completedAttempts, 1)
+    }
     private let degree = Float.pi / 180
 
     // Break caught: a diagnostic could calibrate from the non-prescribed hand or skip the standardized target order.
