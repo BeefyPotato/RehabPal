@@ -1,5 +1,18 @@
 import SwiftUI
 
+enum ExerciseIntroductionCopy {
+    static func text(for exercise: ExerciseKind, prescription: Prescription) -> String {
+        switch exercise {
+        case .balance:
+            "Before the platform appears, hold your prescribed hand level for 25 tracking frames. RehabPal places the platform 25 cm below your initial viewing height and locks it there; then tilt your wrist to guide the ball into \(prescription.balanceTargetCount) changing holes."
+        case .squeeze:
+            "Pick up your real stress ball for \(prescription.squeezeRepetitions) close–hold–reopen repetitions. RehabPal observes motion, never grip force."
+        case .sheepDrop:
+            "Bring all five fingertips together around each sheep for \(prescription.sheepDropRepetitions) settled sheep placements. RehabPal infers the five-fingertip pose; it does not force-measure your hand."
+        }
+    }
+}
+
 struct ExerciseDemoView: View {
     let exercise: ExerciseKind
     let prescription: Prescription
@@ -29,7 +42,7 @@ struct ExerciseDemoView: View {
             if !started {
                 Text(exercise.title).font(.largeTitle.bold())
                 InstructionMediaCard(kind: mediaKind)
-                Text(introduction)
+                Text(ExerciseIntroductionCopy.text(for: exercise, prescription: prescription))
                     .font(.title3)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 650)
@@ -65,17 +78,6 @@ struct ExerciseDemoView: View {
             }
         }
         .padding(40)
-    }
-
-    private var introduction: String {
-        switch exercise {
-        case .balance:
-            "Tilt your wrist to guide the ball into \(prescription.balanceTargetCount) changing holes."
-        case .squeeze:
-            "Pick up your real stress ball for \(prescription.squeezeRepetitions) close–hold–reopen repetitions. RehabPal observes motion, never grip force."
-        case .sheepDrop:
-            "Bring all five fingertips together around each sheep for \(prescription.sheepDropRepetitions) settled sheep placements. RehabPal infers the five-fingertip pose; it does not force-measure your hand."
-        }
     }
 
     private var mediaKind: InstructionMediaKind {

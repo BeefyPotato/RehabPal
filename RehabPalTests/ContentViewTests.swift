@@ -2,6 +2,19 @@ import XCTest
 @testable import RehabPal
 
 final class ContentViewTests: XCTestCase {
+    // Break caught: launching Balance before explaining its 25-frame neutral
+    // capture and locked viewer-relative placement surprises the user in-space.
+    func testBalanceIntroductionExplainsCalibrationAndLockedViewerPlacement() {
+        let copy = ExerciseIntroductionCopy.text(
+            for: .balance,
+            prescription: .demo
+        )
+
+        XCTAssertTrue(copy.contains("25 tracking frames"))
+        XCTAssertTrue(copy.contains("25 cm below"))
+        XCTAssertTrue(copy.contains("locks it there"))
+    }
+
     // Break caught: selecting an exercise opens live tracking before the
     // patient confirms the prescribed dose with Begin.
     func testExercisesRequireBeginBeforeCreatingTheirSessionRequests() {
