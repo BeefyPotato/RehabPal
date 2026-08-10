@@ -206,7 +206,7 @@ On reset generation, clear neutral and reset the ball once, acknowledge reset, p
 
 - [ ] **Step 5: Update HUD and Demo Mode**
 
-Show `Hold level: X / 25` during calibration. Ensure demo synthetic frames use distinct timestamps and pass through the same processor before demo drop controls enable.
+Show `Hold level: X / 25` during calibration. Ensure assisted synthetic frames use distinct timestamps and pass through the same processor. Expose `Complete Rep (Assisted)` in both live and Demo sessions, disabled until active/after completion; never mutate progress directly. Task 6/8 records assisted use in the final result/report.
 
 - [ ] **Step 6: Verify and commit**
 
@@ -266,6 +266,7 @@ Mark physical Vision Pro items unverified until exercised. Commit concrete fixes
 - Modify: `RehabPal/Features/SheepDrop/SheepDropView.swift`
 - Modify: `RehabPal/Features/Assessment/AssessmentDiagnosticImmersiveView.swift`
 - Modify: `RehabPal/Features/Assessment/DiagnosticProcessors.swift`
+- Modify: `RehabPal/Tracking/SyntheticMovementSource.swift`
 - Test: `RehabPalTests/RehabSessionCoordinatorTests.swift`
 - Test: `RehabPalTests/ExerciseSessionTests.swift`
 - Test: `RehabPalTests/DiagnosticProcessorTests.swift`
@@ -293,6 +294,8 @@ Each view/session validates its exact phase joints before processing. Missing va
 - [ ] **Step 5: Write and implement diagnostic phase-joint tests**
 
 Wrist diagnostic invalidates only the partial hold when its reference joints are missing. Finger diagnostic requires only current digit/reference joints; obscured other digits do not block. Missing current digit discards its partial attempt.
+
+Before verification, add processor-path assisted-progression tests for Squeeze, Sheep Drop, wrist diagnostics, and finger diagnostics. One action must complete exactly one current rep/measurement using deterministic synthetic input, be available in live and Demo sessions, record assisted provenance, respect the configured goal, and never increment presentation progress directly. Balance's equivalent remains owned by Task 4.
 
 - [ ] **Step 6: Verify and commit**
 
@@ -350,10 +353,13 @@ git commit -m "Keep Sheep Drop within reach"
 - Test: `RehabPalTests/ContentViewTests.swift`
 - Test: `RehabPalTests/ImmersiveSessionLifecycleTests.swift`
 - Test: `RehabPalTests/ExerciseSessionTests.swift`
+- Test: `RehabPalTests/DiagnosticProcessorTests.swift`
 
 - [ ] **Step 1: Write failing presentation/navigation tests**
 
 Prove recovery presentation replaces the normal instruction, contains progress/recovery action, and exposes Back to Routine. Prove intro Back clears selection and active recovery Back cancels/dismisses/clears authorization.
+
+Also prove every exercise and diagnostic HUD renders its single-step assisted-progress action in live and Demo sessions, disables it during startup/after completion, and labels/records the action as assisted rather than tracked.
 
 - [ ] **Step 2: Verify RED**
 

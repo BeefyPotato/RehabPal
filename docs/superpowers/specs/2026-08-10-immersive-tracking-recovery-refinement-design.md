@@ -86,6 +86,12 @@ The existing five-fingertip cluster pickup and open-hand release processor remai
 
 The bundled sheep remains byte-for-byte unchanged. At runtime, orient its wrapper so the source asset's Z-up axis maps to RealityKit Y-up, its legs/contact side face down toward the table, and its head faces toward the pen. Refit the visible model after rotation so its feet align with the collision body's bottom instead of leaving the sheep inverted or offset. The orientation is session-stable and does not follow the viewer.
 
+## Assisted Progress Controls
+
+Every exercise game and diagnostic test exposes one explicit assisted-progress control for environments where real tracking is unavailable. It is available in both live and Demo sessions. One activation advances exactly one current repetition or diagnostic measurement. The control is disabled while starting or after completion and retains the configured goal/count semantics.
+
+The control must use each experience's normal processor/session transition path with deterministic synthetic joint frames or its existing Demo action. It may not directly increment displayed progress, bypass completion/report generation, or describe the assisted repetition as hand-tracked. Reports/results must retain whether assisted progress was used, including in an otherwise-live session. Balance may place the assisted ball into the target after valid synthetic calibration; Squeeze must run a complete synthetic squeeze/release; Sheep Drop must run a synthetic grasp/carry/open-hand settle; diagnostics must produce one bounded synthetic measurement for the current phase/digit.
+
 ## Recovery UI
 
 The window-level centered `SessionLifecycleCard` is not shown for immersive tracking loss. Each immersive experience renders a shared compact `ImmersiveRecoveryPanel` above its HUD.
@@ -128,5 +134,7 @@ Tests must prove:
 - recovery panel replaces normal instruction rather than overlapping;
 - Back from each exercise intro returns to routine;
 - Back from recovery closes the immersive session and clears authorization.
+- each exercise and diagnostic exposes a one-step assisted-progress action in both live and Demo sessions;
+- each assisted action advances through its processor/session result path and records assisted provenance rather than claiming hand-tracked input.
 
 Full visionOS test-bundle and app builds are required. Physical Vision Pro acceptance must verify partial occlusion behavior, reachable and upright Sheep placement with its head toward the pen, non-overlapping recovery UI, and safe Back teardown.
