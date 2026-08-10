@@ -253,3 +253,126 @@ Verify the exact 25-frame counter, reset-on-invalid pose, frame uniqueness, wris
 - [ ] **Step 5: Write and commit report**
 
 Mark physical Vision Pro items unverified until exercised. Commit concrete fixes and report, then invoke verification-before-completion and finishing-a-development-branch without merging or pushing automatically.
+
+---
+
+### Task 6: Separate Global Hand Presence from Local Measurement Readiness
+
+**Files:**
+- Modify: `RehabPal/Session/RehabSessionCoordinator.swift`
+- Modify: `RehabPal/Session/RehabSessionContracts.swift`
+- Modify: `RehabPal/Features/Squeeze/SqueezeSession.swift`
+- Modify: `RehabPal/Features/Squeeze/SqueezeBuddyView.swift`
+- Modify: `RehabPal/Features/SheepDrop/SheepDropView.swift`
+- Modify: `RehabPal/Features/Assessment/AssessmentDiagnosticImmersiveView.swift`
+- Modify: `RehabPal/Features/Assessment/DiagnosticProcessors.swift`
+- Test: `RehabPalTests/RehabSessionCoordinatorTests.swift`
+- Test: `RehabPalTests/ExerciseSessionTests.swift`
+- Test: `RehabPalTests/DiagnosticProcessorTests.swift`
+
+**Interfaces:**
+- Produces: wrist-only coordinator hand-presence acceptance plus processor-local readiness.
+- Consumes: exact policy in `2026-08-10-immersive-tracking-recovery-refinement-design.md`.
+
+- [ ] **Step 1: Write failing coordinator presence tests**
+
+Prove fresh affected-hand wrist with incomplete processor joints remains active, while missing/stale/wrong-hand wrist enters brief and long global loss. Preserve provider interruption behavior.
+
+- [ ] **Step 2: Verify RED and implement presence boundary**
+
+Change common acceptance to wrist presence. Continue publishing full app-owned frames to processors. Do not globally reject a frame solely because a non-wrist joint is unavailable.
+
+- [ ] **Step 3: Write failing Sheep/Squeeze local-loss tests**
+
+Prove Sheep fingertip/scale-joint loss freezes without release/global pause and clears partial dwell. Prove Squeeze finger-metric loss discards partial phase/hides inferred face while preserving completed reps and global active phase.
+
+- [ ] **Step 4: Implement local readiness**
+
+Each view/session validates its exact phase joints before processing. Missing values call a local `measurementUnavailable`/existing pause-reset path that never counts a rep. Wrist loss remains coordinator-owned.
+
+- [ ] **Step 5: Write and implement diagnostic phase-joint tests**
+
+Wrist diagnostic invalidates only the partial hold when its reference joints are missing. Finger diagnostic requires only current digit/reference joints; obscured other digits do not block. Missing current digit discards its partial attempt.
+
+- [ ] **Step 6: Verify and commit**
+
+Run focused serial coordinator/Squeeze/Sheep/diagnostic tests plus generic build. Commit:
+
+```bash
+git add RehabPal/Session RehabPal/Features/Squeeze RehabPal/Features/SheepDrop \
+  RehabPal/Features/Assessment RehabPalTests
+git commit -m "Make hand occlusion recovery phase specific"
+```
+
+---
+
+### Task 7: Match Sheep Placement to test 9-3
+
+**Files:**
+- Modify: `RehabPal/Tracking/TableSurface.swift`
+- Modify: `RehabPal/Features/SheepDrop/SheepDropView.swift`
+- Modify: `RehabPalTests/TableSurfaceTests.swift`
+- Modify: `RehabPalTests/ExerciseSessionTests.swift`
+
+- [ ] **Step 1: Write failing reference-placement tests**
+
+Feed arbitrary detected plane X/Z and rotation and assert the game transform translation remains X `0`, Z `-0.55`, while Y uses the accepted plane height. Assert fallback `(0, 0.73, -0.55)` and session lock.
+
+- [ ] **Step 2: Verify RED**
+
+Run targeted tests; expected current full plane transform to violate X/Z expectations.
+
+- [ ] **Step 3: Implement height-only table placement**
+
+Retain selector stability/height/extent validation, but publish the game placement transform as identity rotation with fixed X/Z and detected/fallback Y. Ignore anchor center and orientation for game placement.
+
+- [ ] **Step 4: Verify and commit**
+
+Run TableSurface/Sheep tests and generic app build. Commit:
+
+```bash
+git add RehabPal/Tracking/TableSurface.swift RehabPal/Features/SheepDrop/SheepDropView.swift \
+  RehabPalTests/TableSurfaceTests.swift RehabPalTests/ExerciseSessionTests.swift
+git commit -m "Keep Sheep Drop within reach"
+```
+
+---
+
+### Task 8: Compact Immersive Recovery Panel and Back Navigation
+
+**Files:**
+- Create: `RehabPal/Session/ImmersiveRecoveryPanel.swift`
+- Modify: `RehabPal/ContentView.swift`
+- Modify: `RehabPal/Session/SharedRehabImmersiveView.swift`
+- Modify: Balance, Squeeze, Sheep Drop, and diagnostic immersive HUD views.
+- Test: `RehabPalTests/ContentViewTests.swift`
+- Test: `RehabPalTests/ImmersiveSessionLifecycleTests.swift`
+- Test: `RehabPalTests/ExerciseSessionTests.swift`
+
+- [ ] **Step 1: Write failing presentation/navigation tests**
+
+Prove recovery presentation replaces the normal instruction, contains progress/recovery action, and exposes Back to Routine. Prove intro Back clears selection and active recovery Back cancels/dismisses/clears authorization.
+
+- [ ] **Step 2: Verify RED**
+
+Run focused tests; expected missing shared panel/teardown interface.
+
+- [ ] **Step 3: Implement shared compact panel**
+
+Create a presentation model and SwiftUI attachment placed above each game HUD. Hide the normal instruction while active. Keep startup/failure cards window-level; remove the centered tracking-loss card from `ContentView`.
+
+- [ ] **Step 4: Implement safe Back path**
+
+Route intro and recovery Back through one teardown function that closes the immersive lifecycle, cancels coordinator/AppState authorization, clears selection, and returns to routine.
+
+- [ ] **Step 5: Verify full expanded plan**
+
+Run focused tests, full generic test-bundle/app builds, static diff check, and branch-wide review against both design specs plus `test8-2`/`test 9-3`. Update the final report with partial-occlusion, reachability, overlay, and navigation physical checks.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add RehabPal/Session RehabPal/ContentView.swift RehabPal/Features RehabPalTests \
+  .superpowers/sdd/2026-08-10-balance-platform-tracking-fix/final-report.md
+git commit -m "Refine immersive tracking recovery"
+```
