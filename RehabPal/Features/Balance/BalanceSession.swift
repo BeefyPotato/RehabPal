@@ -59,6 +59,10 @@ struct BalanceRenderRotationState: Sendable {
         latestDelta = rotation.quaternion
     }
 
+    mutating func clear() {
+        latestDelta = nil
+    }
+
     func nextOrientation(from current: simd_quatf) -> simd_quatf? {
         latestDelta.map { BalanceReferenceRotation.smoothed(current: current, delta: $0) }
     }

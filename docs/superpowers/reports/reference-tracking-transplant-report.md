@@ -64,3 +64,7 @@ rotation under the prescribed affected hand.
   reapplies the unchanged 0.08 smoothing step every render. This matches test8-2
   cadence and explains the previously delayed ball response without adding a
   non-reference physics wake workaround.
+- The retained Balance delta is explicitly cleared on every non-active route
+  (including brief loss/failure/navigation) and when a long-loss processor reset
+  begins. Confirmation cannot resume tray movement from a stale pre-loss target;
+  a fresh unique post-recovery frame must retain a new delta first.

@@ -32,6 +32,29 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertEqual(abs(simd_dot(actual.vector, expected.vector)), 1, accuracy: 0.0001)
     }
 
+    // Mutation caught: retaining the pre-loss delta lets the tray continue to
+    // move during a brief pause or immediately after long-loss confirmation.
+    func testBalanceRenderCadenceClearRequiresFreshPostRecoveryDelta() {
+        var state = BalanceRenderRotationState()
+        let stale = BalanceRotation(quaternion: simd_quatf(angle: 0.6, axis: [1, 0, 0]))
+        state.retain(stale)
+        XCTAssertNotNil(state.nextOrientation(from: BalanceRotation.identity.quaternion))
+
+        state.clear()
+        XCTAssertNil(state.nextOrientation(from: BalanceRotation.identity.quaternion))
+        XCTAssertNil(state.latestDelta)
+
+        let fresh = BalanceRotation(quaternion: simd_quatf(angle: 0.4, axis: [0, 0, 1]))
+        state.retain(fresh)
+        let resumed = state.nextOrientation(from: BalanceRotation.identity.quaternion)
+        XCTAssertNotNil(resumed)
+        let expected = BalanceReferenceRotation.smoothed(
+            current: BalanceRotation.identity.quaternion,
+            delta: fresh.quaternion
+        )
+        XCTAssertEqual(abs(simd_dot(resumed!.vector, expected.vector)), 1, accuracy: 0.0001)
+    }
+
     func testBalanceRenderPollingIsLiveBalanceSpecificForActiveAndPaused() {
         let request = RehabSessionRequest(experience: .exercise(.balance), prescription: .demo)
         let progress = SessionProgress(completed: 0, goal: request.goal, partial: 0)

@@ -273,6 +273,7 @@ struct BalancePlatformView: View {
         }
         guard case let .active(request, _, _) = coordinator.phase,
               request.experience == .exercise(.balance) else {
+            renderRotation.clear()
             let requiresRecalibration: Bool
             if case .trackingLost(requiresRecalibration: true) = coordinator.pauseReason {
                 requiresRecalibration = true
@@ -311,6 +312,7 @@ struct BalancePlatformView: View {
     private func processRecalibrationIfNeeded() -> Bool {
         if let generation = coordinator.pendingProcessorResetGeneration,
            trackingState.beginProcessorReset(generation: generation) {
+            renderRotation.clear()
             game.pause(requiresRecalibration: true)
             placeBallAtStart()
             freezeBall()
