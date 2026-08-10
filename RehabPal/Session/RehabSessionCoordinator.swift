@@ -43,6 +43,7 @@ final class RehabSessionCoordinator {
     private(set) var phaseRevision = 0
     private(set) var pendingProcessorResetGeneration: Int?
     private(set) var assistedProgressCount = 0
+    private(set) var returnToRoutineRequestGeneration = 0
 
     init(
         prescription: Prescription,
@@ -590,6 +591,11 @@ final class RehabSessionCoordinator {
         resetPublishedTrackingState()
         monitoringGeneration += 1
         setPhase(.idle)
+    }
+
+    func requestReturnToRoutine() {
+        guard activeRequest != nil else { return }
+        returnToRoutineRequestGeneration += 1
     }
 
     private func receiveLiveTrackingEvent(

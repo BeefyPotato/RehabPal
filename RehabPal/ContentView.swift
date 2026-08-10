@@ -101,6 +101,9 @@ struct ContentView: View {
                 Task { await dismissImmersiveAfterFailure() }
             }
         }
+        .onChange(of: session.returnToRoutineRequestGeneration) { _, _ in
+            Task { await returnToRoutine() }
+        }
         .onDisappear {
             Task { await closeImmersiveSession() }
         }
@@ -143,28 +146,6 @@ struct ContentView: View {
                 Text("Demo Mode uses simulated movement and labels its results.")
                     .font(.caption)
                     .foregroundStyle(.orange)
-            }
-        case let .paused(_, progress, .trackingLost(requiresRecalibration)):
-            SessionLifecycleCard {
-                Text(requiresRecalibration ? "Recalibration required" : "Tracking paused")
-                    .font(.title2.bold())
-                Text("Completed \(progress.completed) of \(progress.goal) is preserved. The partial movement was discarded.")
-                    .multilineTextAlignment(.center)
-                if requiresRecalibration {
-                    Button("Recalibrate") {
-                        _ = session.confirmRecalibration()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!session.canConfirmRecalibration)
-                    if !session.canConfirmRecalibration {
-                        Text("Hold the prompted pose until recalibration is ready.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    Text("Keep your prescribed hand in view to continue.")
-                        .foregroundStyle(.secondary)
-                }
             }
         default:
             EmptyView()
@@ -285,6 +266,13 @@ struct ContentView: View {
         }
     }
 
+    private func returnToRoutine() async {
+        _ = ContentViewReturnToRoutine.apply(to: state)
+        selectedExercise = nil
+        exerciseStarted = false
+        await closeImmersiveSession()
+    }
+
     private func monitorJointFrames() async {
         while !Task.isCancelled, session.shouldMonitorFrames {
             if session.provenance == .live || session.pauseReason != nil {
@@ -327,6 +315,21 @@ struct ContentView: View {
              let .liveStartupFailed(message),
              let .immersiveSpaceFailed(message):
             message
+        }
+    }
+}
+
+enum ContentViewReturnToRoutine {
+    @MainActor
+    static func apply(to state: AppState) -> Bool {
+        switch state.stage {
+        case .wristAssessment, .handAssessment:
+            return state.cancelSessionAndReturnToRoutine()
+        case .routine:
+            state.cancelActiveSession()
+            return true
+        default:
+            return false
         }
     }
 }

@@ -36,4 +36,31 @@ final class ContentViewTests: XCTestCase {
             )
         )
     }
+
+    // Mutation caught: a recovery Back action that only clears the coordinator
+    // leaves assessment navigation outside Today's Routine.
+    @MainActor
+    func testReturnToRoutineIntentClearsAuthorizationForExerciseAndDiagnostics() {
+        for experience in [
+            RehabExperience.exercise(.balance), .wristAssessment, .handAssessment
+        ] {
+            let state = AppState()
+            XCTAssertTrue(state.startRoutine())
+            XCTAssertTrue(state.answerMedication(taken: true))
+            if experience != .exercise(.balance) {
+                XCTAssertTrue(state.startAssessment())
+                if experience == .handAssessment {
+                    XCTAssertTrue(state.completeWristAssessment(.init(
+                        controlScore: 73,
+                        trackingConfidence: 1
+                    )))
+                }
+            }
+            let request = RehabSessionRequest(experience: experience, prescription: state.prescription)
+            XCTAssertTrue(state.activateSession(request, provenance: .live))
+            XCTAssertTrue(ContentViewReturnToRoutine.apply(to: state))
+            XCTAssertEqual(state.stage, .routine)
+            XCTAssertNil(state.activeSession)
+        }
+    }
 }
