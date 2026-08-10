@@ -142,3 +142,28 @@ xcodebuild test -quiet -project RehabPal.xcodeproj -scheme RehabPal \
 Exit: 0
 Runtime: 34.951 seconds reported by Xcode
 ```
+
+### Wrist-only final follow-up
+
+`testBalanceActiveTrackingAcceptsWristOnlyFrameAfterCalibration` publishes a post-calibration frame whose joint dictionary contains only a tracked wrist. It asserts `.active`, retained calibration, and wrist-only `requiredJoints`, guarding against implementations that still require any one knuckle after neutral capture. No production change was required.
+
+```text
+xcodebuild test -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'platform=visionOS Simulator,id=2005850E-20C9-4441-B27B-1F665EFB1164' \
+  -derivedDataPath /private/tmp/RehabPalBalanceTask2WristOnlyRuntime \
+  -parallel-testing-enabled NO -maximum-parallel-testing-workers 1 \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 20 \
+  -collect-test-diagnostics never \
+  -only-testing:RehabPalTests/ExerciseSessionTests/testBalanceActiveTrackingAcceptsWristOnlyFrameAfterCalibration \
+  CODE_SIGNING_ALLOWED=NO
+Exit: 0
+Runtime: 34.143 seconds reported by Xcode
+
+xcodebuild build-for-testing -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'generic/platform=visionOS' \
+  -only-testing:RehabPalTests/ExerciseSessionTests \
+  -only-testing:RehabPalTests/JointFrameTests \
+  -derivedDataPath /private/tmp/RehabPalBalanceTask2WristOnlyFocusedBuild \
+  CODE_SIGNING_ALLOWED=NO
+Exit: 0
+```

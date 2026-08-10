@@ -692,6 +692,29 @@ final class ExerciseSessionTests: XCTestCase {
         }
     }
 
+    // Break caught: requiring the wrist plus any one calibration knuckle after
+    // neutral capture pauses a valid wrist-only steering frame.
+    func testBalanceActiveTrackingAcceptsWristOnlyFrameAfterCalibration() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        calibrateBalance(&session)
+        let wristOnlyFrame = HandJointFrame.synthetic(
+            hand: .right,
+            timestamp: 29,
+            joints: [.wrist: .tracked(transform: matrix_identity_float4x4)]
+        )
+
+        XCTAssertEqual(
+            session.process(
+                frame: wristOnlyFrame,
+                ballPosition: BalanceTargetSchedule.ballStart,
+                ballEscaped: false
+            ),
+            .active(WristTilt(pitch: 0, roll: 0))
+        )
+        XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(session.requiredJoints, Set([HandJoint.wrist]))
+    }
+
     // Break caught: a missing wrist can leave physics active using a stale
     // transform even though the steering joint is unavailable.
     func testBalanceActiveTrackingPausesWithoutWrist() {
