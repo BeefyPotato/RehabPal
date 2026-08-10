@@ -17,10 +17,14 @@
 - `git diff --check`: exit 0.
 - Simulator runtime was not claimed or attempted for this timeboxed slice.
 
-## Remaining Task 8 Wiring
+## HUD Wiring Completed
 
-- Place the shared panel above each Balance, Squeeze, Sheep, wrist-diagnostic, and finger-diagnostic HUD attachment.
-- Pass each panel's Back action to `coordinator.requestReturnToRoutine()` and Recalibrate action to `coordinator.confirmRecalibration()`.
-- Hide each normal phase instruction while its recovery presentation is active, while retaining the assisted-progress action in live and Demo sessions.
-- Add per-HUD presentation tests proving non-overlap/replacement and action availability.
-- Perform physical Vision Pro acceptance of safe dismissal and panel placement.
+- Balance, Squeeze, Sheep Drop, wrist diagnostic, and finger diagnostic attachments now render the recovery panel above their HUD in one vertical stack with explicit spacing.
+- Each normal phase instruction is suppressed during recovery; progress and assisted-progress controls remain visible.
+- Recalibrate routes to `confirmRecalibration()` and is enabled only when the coordinator reports readiness.
+- Back routes through the coordinator intent to ContentView's shared safe teardown.
+
+## Remaining Acceptance
+
+- Add rendered/inspection-level UI coverage if a visionOS test worker becomes available.
+- Perform physical Vision Pro acceptance of panel placement, safe dismissal, and assisted-button reachability during recovery.

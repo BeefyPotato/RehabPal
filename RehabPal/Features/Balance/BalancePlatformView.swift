@@ -231,22 +231,32 @@ struct BalancePlatformView: View {
             }
         } attachments: {
             Attachment(id: "balance-hud") {
-                BalanceHUD(
-                    progress: game.progress,
-                    isCalibrated: game.isCalibrated,
-                    calibrationProgress: game.calibrationProgress,
-                    calibrationGoal: game.calibrationFrameGoal,
-                    pauseReason: coordinator.pauseReason,
-                    isDemo: coordinator.isUsingDemoMode,
-                    showAssistedAction: BalanceFallbackControl.isVisible(
-                        hasAuthorizedSession: hasAuthorizedBalanceSession
-                    ),
-                    assistedActionEnabled: BalanceFallbackControl.isEnabled(
-                        hasAuthorizedSession: hasAuthorizedBalanceSession,
-                        isComplete: game.isComplete
-                    ),
-                    onAssistedRep: completeAssistedRep
+                let recovery = ImmersiveRecoveryPresentation.make(
+                    phase: coordinator.phase,
+                    canConfirmRecalibration: coordinator.canConfirmRecalibration
                 )
+                ImmersiveRecoveryStack(
+                    presentation: recovery,
+                    onRecalibrate: { _ = coordinator.confirmRecalibration() },
+                    onBackToRoutine: coordinator.requestReturnToRoutine
+                ) {
+                    BalanceHUD(
+                        progress: game.progress,
+                        isCalibrated: game.isCalibrated,
+                        calibrationProgress: game.calibrationProgress,
+                        calibrationGoal: game.calibrationFrameGoal,
+                        isRecovering: recovery != nil,
+                        isDemo: coordinator.isUsingDemoMode,
+                        showAssistedAction: BalanceFallbackControl.isVisible(
+                            hasAuthorizedSession: hasAuthorizedBalanceSession
+                        ),
+                        assistedActionEnabled: BalanceFallbackControl.isEnabled(
+                            hasAuthorizedSession: hasAuthorizedBalanceSession,
+                            isComplete: game.isComplete
+                        ),
+                        onAssistedRep: completeAssistedRep
+                    )
+                }
             }
         }
     }
@@ -527,7 +537,7 @@ private struct BalanceHUD: View {
     let isCalibrated: Bool
     let calibrationProgress: Int
     let calibrationGoal: Int
-    let pauseReason: SessionPauseReason?
+    let isRecovering: Bool
     let isDemo: Bool
     let showAssistedAction: Bool
     let assistedActionEnabled: Bool
@@ -536,20 +546,17 @@ private struct BalanceHUD: View {
     var body: some View {
         VStack(spacing: 8) {
             SessionProgressLabel(progress: progress)
-            if pauseReason != nil {
-                Label("Tracking paused", systemImage: "pause.circle.fill")
-                    .foregroundStyle(.orange)
-            } else if !isCalibrated {
+            if !isRecovering && !isCalibrated {
                 Label("Hold your prescribed hand level", systemImage: "hand.raised")
                 Text("Hold level: \(calibrationProgress) / \(calibrationGoal)")
                     .font(.headline.monospacedDigit())
                 Text("Keep all four knuckles straight and level to calibrate")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else if progress.completed == progress.goal {
+            } else if !isRecovering && progress.completed == progress.goal {
                 Label("Prescribed dose complete", systemImage: "checkmark.seal.fill")
                     .foregroundStyle(.green)
-            } else {
+            } else if !isRecovering {
                 Text("Tilt your wrist to roll the ball into the hole")
                     .font(.caption)
                     .foregroundStyle(.secondary)

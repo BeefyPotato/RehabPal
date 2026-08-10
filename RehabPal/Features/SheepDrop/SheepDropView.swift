@@ -364,16 +364,27 @@ struct SheepDropView: View {
             }
         } attachments: {
             Attachment(id: "sheep-drop-hud") {
-                SheepDropHUD(
-                    progress: game.progress,
-                    presentation: hudPresentation,
-                    loadState: assetLoadState,
-                    assistedActionEnabled: AssistedProgressControl.isAuthorized(
-                        coordinator.phase,
-                        for: .exercise(.sheepDrop)
-                    ) && assetLoadState == .ready,
-                    onAssistedStep: performAssistedStep
+                let recovery = ImmersiveRecoveryPresentation.make(
+                    phase: coordinator.phase,
+                    canConfirmRecalibration: coordinator.canConfirmRecalibration
                 )
+                ImmersiveRecoveryStack(
+                    presentation: recovery,
+                    onRecalibrate: { _ = coordinator.confirmRecalibration() },
+                    onBackToRoutine: coordinator.requestReturnToRoutine
+                ) {
+                    SheepDropHUD(
+                        progress: game.progress,
+                        presentation: hudPresentation,
+                        loadState: assetLoadState,
+                        isRecovering: recovery != nil,
+                        assistedActionEnabled: AssistedProgressControl.isAuthorized(
+                            coordinator.phase,
+                            for: .exercise(.sheepDrop)
+                        ) && assetLoadState == .ready,
+                        onAssistedStep: performAssistedStep
+                    )
+                }
             }
         }
         .onDisappear {
@@ -871,6 +882,7 @@ private struct SheepDropHUD: View {
     let progress: SessionProgress
     let presentation: SheepDropHUDPresentation
     let loadState: SheepDropAssetLoadState
+    let isRecovering: Bool
     let assistedActionEnabled: Bool
     let onAssistedStep: () -> Void
 
@@ -889,9 +901,11 @@ private struct SheepDropHUD: View {
             }
             .font(.caption.bold())
 
-            Text(presentation.instruction)
-                .font(.headline)
-                .multilineTextAlignment(.center)
+            if !isRecovering {
+                Text(presentation.instruction)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+            }
 
             switch loadState {
             case .loading:

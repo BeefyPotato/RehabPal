@@ -30,7 +30,7 @@ struct DiagnosticHUDPresentation: Equatable, Sendable {
 struct DiagnosticHUD: View {
     let presentation: DiagnosticHUDPresentation
     let trackingConfidence: Double
-    let isPaused: Bool
+    let isRecovering: Bool
     let assistedActionTitle: String
     let assistedActionEnabled: Bool
     let onAssistedStep: () -> Void
@@ -41,10 +41,7 @@ struct DiagnosticHUD: View {
                 .font(.title2.bold())
             Text(presentation.subjectLabel)
                 .font(.headline)
-            if isPaused {
-                Label("Tracking paused — partial attempt discarded", systemImage: "pause.circle.fill")
-                    .foregroundStyle(.orange)
-            } else {
+            if !isRecovering {
                 Text(presentation.phaseLabel)
                     .foregroundStyle(.secondary)
             }

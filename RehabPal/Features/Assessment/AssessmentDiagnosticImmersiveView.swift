@@ -76,22 +76,32 @@ struct WristDiagnosticImmersiveView: View {
                 }
             } attachments: {
                 Attachment(id: "wrist-diagnostic-hud") {
-                    DiagnosticHUD(
-                        presentation: DiagnosticHUDPresentation(
-                            progress: processor.progress,
-                            subject: processor.currentTarget?.title ?? "Wrist assessment",
-                            phase: phaseLabel,
-                            isDemo: coordinator.isUsingDemoMode
-                        ),
-                        trackingConfidence: Double(processor.trackingConfidence),
-                        isPaused: coordinator.pauseReason != nil,
-                        assistedActionTitle: "Complete Attempt (Assisted)",
-                        assistedActionEnabled: AssistedProgressControl.isAuthorized(
-                            coordinator.phase,
-                            for: .wristAssessment
-                        ),
-                        onAssistedStep: performAssistedStep
+                    let recovery = ImmersiveRecoveryPresentation.make(
+                        phase: coordinator.phase,
+                        canConfirmRecalibration: coordinator.canConfirmRecalibration
                     )
+                    ImmersiveRecoveryStack(
+                        presentation: recovery,
+                        onRecalibrate: { _ = coordinator.confirmRecalibration() },
+                        onBackToRoutine: coordinator.requestReturnToRoutine
+                    ) {
+                        DiagnosticHUD(
+                            presentation: DiagnosticHUDPresentation(
+                                progress: processor.progress,
+                                subject: processor.currentTarget?.title ?? "Wrist assessment",
+                                phase: phaseLabel,
+                                isDemo: coordinator.isUsingDemoMode
+                            ),
+                            trackingConfidence: Double(processor.trackingConfidence),
+                            isRecovering: recovery != nil,
+                            assistedActionTitle: "Complete Attempt (Assisted)",
+                            assistedActionEnabled: AssistedProgressControl.isAuthorized(
+                                coordinator.phase,
+                                for: .wristAssessment
+                            ),
+                            onAssistedStep: performAssistedStep
+                        )
+                    }
                 }
             }
         }
@@ -276,22 +286,32 @@ struct FingerDiagnosticImmersiveView: View {
                 }
             } attachments: {
                 Attachment(id: "finger-diagnostic-hud") {
-                    DiagnosticHUD(
-                        presentation: DiagnosticHUDPresentation(
-                            progress: processor.progress,
-                            subject: processor.currentDigit?.title ?? "Finger ROM",
-                            phase: phaseLabel,
-                            isDemo: coordinator.isUsingDemoMode
-                        ),
-                        trackingConfidence: processor.trackingConfidence,
-                        isPaused: coordinator.pauseReason != nil,
-                        assistedActionTitle: "Complete ROM Attempt (Assisted)",
-                        assistedActionEnabled: AssistedProgressControl.isAuthorized(
-                            coordinator.phase,
-                            for: .handAssessment
-                        ),
-                        onAssistedStep: performAssistedStep
+                    let recovery = ImmersiveRecoveryPresentation.make(
+                        phase: coordinator.phase,
+                        canConfirmRecalibration: coordinator.canConfirmRecalibration
                     )
+                    ImmersiveRecoveryStack(
+                        presentation: recovery,
+                        onRecalibrate: { _ = coordinator.confirmRecalibration() },
+                        onBackToRoutine: coordinator.requestReturnToRoutine
+                    ) {
+                        DiagnosticHUD(
+                            presentation: DiagnosticHUDPresentation(
+                                progress: processor.progress,
+                                subject: processor.currentDigit?.title ?? "Finger ROM",
+                                phase: phaseLabel,
+                                isDemo: coordinator.isUsingDemoMode
+                            ),
+                            trackingConfidence: processor.trackingConfidence,
+                            isRecovering: recovery != nil,
+                            assistedActionTitle: "Complete ROM Attempt (Assisted)",
+                            assistedActionEnabled: AssistedProgressControl.isAuthorized(
+                                coordinator.phase,
+                                for: .handAssessment
+                            ),
+                            onAssistedStep: performAssistedStep
+                        )
+                    }
                 }
             }
         }

@@ -75,3 +75,22 @@ struct ImmersiveRecoveryPanel: View {
     }
 }
 
+struct ImmersiveRecoveryStack<HUD: View>: View {
+    let presentation: ImmersiveRecoveryPresentation?
+    let onRecalibrate: () -> Void
+    let onBackToRoutine: () -> Void
+    @ViewBuilder let hud: HUD
+
+    var body: some View {
+        VStack(spacing: 14) {
+            if let presentation {
+                ImmersiveRecoveryPanel(
+                    presentation: presentation,
+                    onRecalibrate: onRecalibrate,
+                    onBackToRoutine: onBackToRoutine
+                )
+            }
+            hud
+        }
+    }
+}

@@ -86,22 +86,32 @@ struct SqueezeBuddyView: View {
             updateFace()
         } attachments: {
             Attachment(id: "squeeze-hud") {
-                SqueezeHUD(
-                    progress: game.progress,
-                    phase: game.phase,
-                    presentation: SqueezeHUDPresentation(
-                        statusLabel: game.statusLabel,
-                        graspDetected: game.facePose != nil,
-                        isDemo: coordinator.isUsingDemoMode
-                    ),
-                    pauseReason: coordinator.pauseReason,
-                    isDemo: coordinator.isUsingDemoMode,
-                    assistedActionEnabled: AssistedProgressControl.isAuthorized(
-                        coordinator.phase,
-                        for: .exercise(.squeeze)
-                    ),
-                    onAssistedStep: performAssistedStep
+                let recovery = ImmersiveRecoveryPresentation.make(
+                    phase: coordinator.phase,
+                    canConfirmRecalibration: coordinator.canConfirmRecalibration
                 )
+                ImmersiveRecoveryStack(
+                    presentation: recovery,
+                    onRecalibrate: { _ = coordinator.confirmRecalibration() },
+                    onBackToRoutine: coordinator.requestReturnToRoutine
+                ) {
+                    SqueezeHUD(
+                        progress: game.progress,
+                        phase: game.phase,
+                        presentation: SqueezeHUDPresentation(
+                            statusLabel: game.statusLabel,
+                            graspDetected: game.facePose != nil,
+                            isDemo: coordinator.isUsingDemoMode
+                        ),
+                        isRecovering: recovery != nil,
+                        isDemo: coordinator.isUsingDemoMode,
+                        assistedActionEnabled: AssistedProgressControl.isAuthorized(
+                            coordinator.phase,
+                            for: .exercise(.squeeze)
+                        ),
+                        onAssistedStep: performAssistedStep
+                    )
+                }
             }
         }
     }
@@ -249,7 +259,7 @@ private struct SqueezeHUD: View {
     let progress: SessionProgress
     let phase: SqueezeRepDetector.Phase
     let presentation: SqueezeHUDPresentation
-    let pauseReason: SessionPauseReason?
+    let isRecovering: Bool
     let isDemo: Bool
     let assistedActionEnabled: Bool
     let onAssistedStep: () -> Void
@@ -264,14 +274,11 @@ private struct SqueezeHUD: View {
                 phaseStep("Hold", active: phase == .held)
                 phaseStep("Reopen", active: phase == .reopening)
             }
-            if pauseReason != nil {
-                Label("Tracking paused — face hidden", systemImage: "pause.circle.fill")
-                    .foregroundStyle(.orange)
-            } else if let graspDisclosure = presentation.graspDisclosure {
+            if !isRecovering, let graspDisclosure = presentation.graspDisclosure {
                 Text(graspDisclosure)
                     .font(.caption.bold())
                     .foregroundStyle(.green)
-            } else {
+            } else if !isRecovering {
                 Text("Cup your prescribed hand around the real stress ball and hold still for 1 second")
                     .font(.caption)
                     .multilineTextAlignment(.center)
