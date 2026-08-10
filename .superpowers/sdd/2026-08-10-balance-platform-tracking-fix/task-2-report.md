@@ -103,3 +103,42 @@ xcodebuild build -quiet -project RehabPal.xcodeproj -scheme RehabPal \
   CODE_SIGNING_ALLOWED=NO
 Exit: 0
 ```
+
+## P2 Coverage Follow-ups
+
+The four requested follow-ups were completed as test-only changes; no additional production defect was exposed:
+
+- The unfinished-calibration pause test now restarts its fresh hold at timestamp 0 after previously reaching timestamp 9. This fails if progress is cleared but `lastCalibrationTimestamp` is retained.
+- `testBalanceCalibrationNonlevelPoseResetsProgress` supplies all five required joints as tracked while raising the little knuckle by 0.02 m, proving the session resets an existing streak when the level-pose predicate rejects geometry.
+- The brief-loss regression scores one target before pausing and asserts `completedSuccesses == 1` before pause, during retained calibration, and after `.resetBall` recovery.
+- The wrist-only regression table independently removes index, middle, ring, and little knuckles after calibration and requires `.active` for every row.
+
+Focused generic test-bundle compile:
+
+```text
+xcodebuild build-for-testing -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'generic/platform=visionOS' \
+  -only-testing:RehabPalTests/ExerciseSessionTests \
+  -only-testing:RehabPalTests/JointFrameTests \
+  -derivedDataPath /private/tmp/RehabPalBalanceTask2CoverageFocusedBuild \
+  CODE_SIGNING_ALLOWED=NO
+Exit: 0
+```
+
+Bounded focused simulator execution:
+
+```text
+xcodebuild test -quiet -project RehabPal.xcodeproj -scheme RehabPal \
+  -destination 'platform=visionOS Simulator,id=2005850E-20C9-4441-B27B-1F665EFB1164' \
+  -derivedDataPath /private/tmp/RehabPalBalanceTask2CoverageRuntime \
+  -parallel-testing-enabled NO -maximum-parallel-testing-workers 1 \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 20 \
+  -collect-test-diagnostics never \
+  -only-testing:RehabPalTests/ExerciseSessionTests/testBalanceBriefPauseClearsPartialCalibrationProgressAndTimestamp \
+  -only-testing:RehabPalTests/ExerciseSessionTests/testBalanceCalibrationNonlevelPoseResetsProgress \
+  -only-testing:RehabPalTests/ExerciseSessionTests/testBalanceBriefLossRetainsCalibrationAndResetsBallOnRecovery \
+  -only-testing:RehabPalTests/ExerciseSessionTests/testBalanceActiveTrackingIgnoresMissingKnuckles \
+  CODE_SIGNING_ALLOWED=NO
+Exit: 0
+Runtime: 34.951 seconds reported by Xcode
+```

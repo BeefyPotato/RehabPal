@@ -571,9 +571,9 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertFalse(session.isCalibrated)
     }
 
-    // Break caught: an incomplete or nonlevel hand pose can be ignored without
-    // breaking the stable-hold streak, allowing separated valid frames to calibrate.
-    func testBalanceCalibrationInvalidPoseResetsProgress() {
+    // Break caught: an incomplete hand pose can be ignored without breaking
+    // the stable-hold streak, allowing separated valid frames to calibrate.
+    func testBalanceCalibrationIncompletePoseResetsProgress() {
         var session = BalanceSession(prescription: .demo, seed: 6)
         advanceBalanceCalibration(&session, through: 9)
 
@@ -583,6 +583,28 @@ final class ExerciseSessionTests: XCTestCase {
                     hand: .right,
                     timestamp: 10,
                     omit: .littleFingerKnuckle
+                ),
+                ballPosition: .zero,
+                ballEscaped: false
+            ),
+            .waitingForCalibration
+        )
+        XCTAssertEqual(session.calibrationProgress, 0)
+        XCTAssertFalse(session.isCalibrated)
+    }
+
+    // Break caught: a fully tracked but nonlevel pose can be ignored without
+    // resetting the consecutive calibration sequence at the session boundary.
+    func testBalanceCalibrationNonlevelPoseResetsProgress() {
+        var session = BalanceSession(prescription: .demo, seed: 6)
+        advanceBalanceCalibration(&session, through: 9)
+
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(
+                    hand: .right,
+                    timestamp: 10,
+                    raisedKnuckle: .littleFingerKnuckle
                 ),
                 ballPosition: .zero,
                 ballEscaped: false
@@ -647,18 +669,27 @@ final class ExerciseSessionTests: XCTestCase {
         var session = BalanceSession(prescription: .demo, seed: 6)
         calibrateBalance(&session)
 
-        XCTAssertEqual(
-            session.process(
-                frame: calibratedFrame(
-                    hand: .right,
-                    timestamp: 25,
-                    omit: .littleFingerKnuckle
+        let calibrationKnuckles: [HandJoint] = [
+            .indexFingerKnuckle,
+            .middleFingerKnuckle,
+            .ringFingerKnuckle,
+            .littleFingerKnuckle
+        ]
+        for (offset, missingKnuckle) in calibrationKnuckles.enumerated() {
+            XCTAssertEqual(
+                session.process(
+                    frame: calibratedFrame(
+                        hand: .right,
+                        timestamp: Double(25 + offset),
+                        omit: missingKnuckle
+                    ),
+                    ballPosition: BalanceTargetSchedule.ballStart,
+                    ballEscaped: false
                 ),
-                ballPosition: BalanceTargetSchedule.ballStart,
-                ballEscaped: false
-            ),
-            .active(WristTilt(pitch: 0, roll: 0))
-        )
+                .active(WristTilt(pitch: 0, roll: 0)),
+                "Expected active wrist tracking with \(missingKnuckle.rawValue) missing"
+            )
+        }
     }
 
     // Break caught: a missing wrist can leave physics active using a stale
@@ -744,7 +775,7 @@ final class ExerciseSessionTests: XCTestCase {
 
         XCTAssertEqual(session.calibrationProgress, 0)
         XCTAssertFalse(session.isCalibrated)
-        for timestamp in 100..<124 {
+        for timestamp in 0..<24 {
             XCTAssertEqual(
                 session.process(
                     frame: calibratedFrame(hand: .right, timestamp: Double(timestamp)),
@@ -758,7 +789,7 @@ final class ExerciseSessionTests: XCTestCase {
         XCTAssertFalse(session.isCalibrated)
         XCTAssertEqual(
             session.process(
-                frame: calibratedFrame(hand: .right, timestamp: 124),
+                frame: calibratedFrame(hand: .right, timestamp: 24),
                 ballPosition: BalanceTargetSchedule.ballStart,
                 ballEscaped: false
             ),
@@ -773,13 +804,29 @@ final class ExerciseSessionTests: XCTestCase {
         var session = BalanceSession(prescription: .demo, seed: 13)
         let frame = calibratedFrame(hand: .right)
         calibrateBalance(&session)
+        XCTAssertEqual(
+            session.process(
+                frame: calibratedFrame(hand: .right, timestamp: 25),
+                ballPosition: session.currentTarget.position,
+                ballEscaped: false
+            ),
+            .scored(
+                completed: 1,
+                goal: 10,
+                tilt: WristTilt(pitch: 0, roll: 0),
+                isComplete: false
+            )
+        )
+        XCTAssertEqual(session.completedSuccesses, 1)
 
         session.pause(requiresRecalibration: false)
         XCTAssertTrue(session.isCalibrated)
         XCTAssertEqual(session.calibrationProgress, 25)
+        XCTAssertEqual(session.completedSuccesses, 1)
         XCTAssertEqual(session.process(frame: nil, ballPosition: .zero, ballEscaped: false), .paused)
         XCTAssertEqual(session.process(frame: frame, ballPosition: .zero, ballEscaped: false), .resetBall(WristTilt(pitch: 0, roll: 0)))
         XCTAssertTrue(session.isCalibrated)
+        XCTAssertEqual(session.completedSuccesses, 1)
     }
 
     // Break caught: a long interruption can retain an obsolete neutral, accept
@@ -1111,7 +1158,8 @@ final class ExerciseSessionTests: XCTestCase {
         hand: AffectedHand,
         timestamp: TimeInterval = 1,
         wrist: simd_float4x4 = matrix_identity_float4x4,
-        omit omittedJoint: HandJoint? = nil
+        omit omittedJoint: HandJoint? = nil,
+        raisedKnuckle: HandJoint? = nil
     ) -> HandJointFrame {
         let knuckles: [(HandJoint, Float)] = [
             (.indexFingerKnuckle, -0.03),
@@ -1121,7 +1169,8 @@ final class ExerciseSessionTests: XCTestCase {
         ]
         var joints: [HandJoint: HandJointSample] = [.wrist: .tracked(transform: wrist)]
         for (joint, x) in knuckles where joint != omittedJoint {
-            joints[joint] = .tracked(transform: simd_float4x4(translation: SIMD3<Float>(x, 0, 0)))
+            let y: Float = joint == raisedKnuckle ? 0.02 : 0
+            joints[joint] = .tracked(transform: simd_float4x4(translation: SIMD3<Float>(x, y, 0)))
         }
         if omittedJoint == .wrist { joints[.wrist] = nil }
         return .synthetic(hand: hand, timestamp: timestamp, joints: joints)
